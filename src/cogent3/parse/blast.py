@@ -10,10 +10,10 @@ from cogent3.parse.record_finder import (
 
 
 __author__ = "Micah Hamady"
-__copyright__ = "Copyright 2007-2020, The Cogent Project"
+__copyright__ = "Copyright 2007-2021, The Cogent Project"
 __credits__ = ["Micah Hamady", "Rob Knight"]
 __license__ = "BSD-3"
-__version__ = "2020.2.7a"
+__version__ = "2021.04.20a"
 __maintainer__ = "Micah Hamady"
 __email__ = "hamady@colorado.edu"
 __status__ = "Prototype"
@@ -169,7 +169,7 @@ def MinimalBlastParser9(lines, include_column_names=False):
 def MinimalPsiBlastParser9(lines, include_column_names=False):
     """Yields successive records from lines (props, data list)
 
-        lines must be of psi-blast output format
+    lines must be of psi-blast output format
     """
     return GenericBlastParser9(lines, PsiBlastFinder, include_column_names)
 
@@ -177,7 +177,7 @@ def MinimalPsiBlastParser9(lines, include_column_names=False):
 def MinimalBlatParser9(lines, include_column_names=True):
     """Yields successive records from lines (props, data list)
 
-       lines must be of blat output (blast9) format
+    lines must be of blat output (blast9) format
     """
     return GenericBlastParser9(lines, BlatFinder, include_column_names)
 

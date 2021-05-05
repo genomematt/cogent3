@@ -68,7 +68,7 @@ from cogent3.util.misc import extend_docstring_from, get_object_provenance
 
 
 __author__ = "Peter Maxwell, Gavin Huttley and Andrew Butterfield"
-__copyright__ = "Copyright 2007-2020, The Cogent Project"
+__copyright__ = "Copyright 2007-2021, The Cogent Project"
 __contributors__ = [
     "Gavin Huttley",
     "Andrew Butterfield",
@@ -79,7 +79,7 @@ __contributors__ = [
     "Von Bing Yap",
 ]
 __license__ = "BSD-3"
-__version__ = "2020.2.7a"
+__version__ = "2021.04.20a"
 __maintainer__ = "Gavin Huttley"
 __email__ = "gavin.huttley@anu.edu.au"
 __status__ = "Production"
@@ -144,31 +144,37 @@ class _SubstitutionModel(object):
         name="",
         motifs=None,
     ):
-        # subclasses can extend this incomplete docstring
         """
-
-        alphabet:
-         - alphabet - An Alphabet object
-         - motif_length: Use a tuple alphabet based on 'alphabet'.
-         - motifs: Use a subalphabet that only contains those motifs.
-         - model_gaps: Whether the gap motif should be included as a state.
-         - recode_gaps: Whether gaps in an alignment should be treated as an
-           ambiguous state instead.
-
-        Motif Probability:
-         - motif_probs: Dictionary of probabilities.
-         - equal_motif_probs: Flag to set alignment motif probs equal.
-         - motif_probs_alignment: An alignment from which motif probs are set.
-
-         If none of these options are set then motif probs will be derived
-         from the data: ie the particular alignment provided later.
-
-         - optimise_motif_probs: Treat like other free parameters.  Any values
-           set by the other motif_prob options will be used as initial values.
-
-         - mprob_model: 'tuple', 'conditional', 'monomer' or 'monomers' to specify how
+        Parameters
+        ----------
+        alphabet
+            An Alphabet object
+        motif_probs
+            Dictionary of probabilities.
+        optimise_motif_probs: bool
+            Treat like other free parameters.  Any values set by the other
+            motif_prob options will be used as initial values.
+        equal_motif_probs: bool
+            Flag to set alignment motif probs equal.
+        motif_probs_from_data: bool
+            Get motif probabilities from data provided to likelihood function.
+        motif_probs_alignment
+            An alignment from which motif probs are set.
+        mprob_model: str
+            'tuple', 'conditional', 'monomer' or 'monomers' to specify how
            tuple-alphabet (including codon) motif probs are used.
-
+        model_gaps: bool
+            Whether the gap motif should be included as a state.
+        recode_gaps: bool
+            Whether gaps in an alignment should be treated as an ambiguous
+            state instead.
+        motif_length: int
+            Based on 'alphabet', uses a tuple alphabet where individual words
+            have motif_length number of characters.
+        name: str
+            Name of this model
+        motifs
+            Use a subalphabet that only contains those motifs.
         """
         d = locals()
         exclude = ("self", "__class__")
@@ -426,8 +432,7 @@ class _SubstitutionModel(object):
 
 def non_zero_coords(matrix):
     dim = matrix.shape[0]
-    coords = [(i, j) for i in range(dim) for j in range(dim) if matrix[i, j] != 0]
-    return coords
+    return [(i, j) for i in range(dim) for j in range(dim) if matrix[i, j] != 0]
 
 
 class _ContinuousSubstitutionModel(_SubstitutionModel):
@@ -462,11 +467,15 @@ class _ContinuousSubstitutionModel(_SubstitutionModel):
         **kw,
     ):
         """
-         - with_rate: Add a 'rate' parameter which varies by bin.
-         - ordered_param: name of a single parameter which distinguishes any bins.
-         - distribution: choices of 'free' or 'gamma' or an instance of some
-           distribution. Could probably just deprecate free
-         - partitioned_params: names of params to be partitioned across bins
+        with_rate: bool
+            Add a 'rate' parameter which varies by bin.
+        ordered_param: str
+            name of a single parameter which distinguishes any bins.
+        distribution: str
+            choices of 'free' or 'gamma' or an instance of some distribution
+        partitioned_params
+            names of params to be partitioned across bins
+        kw
         """
 
         _SubstitutionModel.__init__(self, alphabet, **kw)
@@ -572,13 +581,11 @@ class _ContinuousSubstitutionModel(_SubstitutionModel):
         for m in self.predicate_masks.values():
             mats += m
         ref_mask = self._instantaneous_mask - mats
-        ref_cells = set(non_zero_coords(ref_mask))
-        return ref_cells
+        return set(non_zero_coords(ref_mask))
 
     def get_param_matrix_coords(self, include_ref_cell=False):
         """returncoordinates for every predicate"""
         dim = len(self.alphabet)
-        mats = numpy.zeros((dim, dim), dtype=int)
         param_coords = {}
         for key, m in self.predicate_masks.items():
             coords = [(i, j) for i in range(dim) for j in range(dim) if m[i, j] != 0]
@@ -594,8 +601,7 @@ class _ContinuousSubstitutionModel(_SubstitutionModel):
         Q = CalcDefn(self.calcQ, name="Q")(word_probs, mprobs_matrix, *rate_params)
         expm = NonParamDefn("expm")
         exp = ExpDefn(expm)
-        Qd = CallDefn(exp, Q, name="Qd")
-        return Qd
+        return CallDefn(exp, Q, name="Qd")
 
     def _make_bin_param_defn(self, edge_par_name, bin_par_name, bprob_defn):
         # if no ordered param defined, behaves as old, everything indexed by
@@ -638,10 +644,9 @@ class _ContinuousSubstitutionModel(_SubstitutionModel):
 
     def make_psubs_defn(self, bprobs, word_probs, mprobs_matrix, rate_params):
         distance = self.make_distance_defn(bprobs)
-        P = self.make_continuous_psub_defn(
+        return self.make_continuous_psub_defn(
             word_probs, mprobs_matrix, distance, rate_params
         )
-        return P
 
     def make_distance_defn(self, bprobs):
         length = LengthDefn()
@@ -656,8 +661,7 @@ class _ContinuousSubstitutionModel(_SubstitutionModel):
         self, word_probs, mprobs_matrix, distance, rate_params
     ):
         Qd = self.make_Qd_defn(word_probs, mprobs_matrix, rate_params)
-        P = CallDefn(Qd, distance, name="psubs")
-        return P
+        return CallDefn(Qd, distance, name="psubs")
 
 
 class StationaryQ:
@@ -679,7 +683,7 @@ class Empirical(StationaryQ, _ContinuousSubstitutionModel):
     @extend_docstring_from(_ContinuousSubstitutionModel.__init__)
     def __init__(self, alphabet, rate_matrix, **kw):
         """
-         - rate_matrix: The instantaneous rate matrix
+        - rate_matrix: The instantaneous rate matrix
         """
         _ContinuousSubstitutionModel.__init__(self, alphabet, **kw)
         d = locals()
@@ -709,8 +713,11 @@ class Parametric(_ContinuousSubstitutionModel):
     @extend_docstring_from(_ContinuousSubstitutionModel.__init__)
     def __init__(self, alphabet, predicates=None, scales=None, **kw):
         """
-         - predicates: a dict of {name:predicate}. See cogent3.evolve.predicate
-         - scales: scale rules, dict with predicates
+        predicates: dict
+            a dict of {name:predicate}. See cogent3.evolve.predicate
+        scales: dict
+            scale rules, dict with predicates
+        kw
         """
         self._canned_predicates = None
         _ContinuousSubstitutionModel.__init__(self, alphabet, **kw)
@@ -783,7 +790,11 @@ class Parametric(_ContinuousSubstitutionModel):
             title = "rate matrix"
 
         t = Table(
-            header=labels, rows=rows, max_width=max_width, title=title, row_ids=True
+            header=labels,
+            data=rows,
+            max_width=max_width,
+            title=title,
+            index_name=r"From\To",
         )
         result = t if return_table else t.to_string(center=True)
         return result
@@ -889,11 +900,14 @@ class Parametric(_ContinuousSubstitutionModel):
 
 
 class Stationary(StationaryQ, Parametric):
+    @extend_docstring_from(Parametric.__init__)
     def __init__(self, *args, **kw):
+        """"""
         Parametric.__init__(self, *args, **kw)
 
 
 class TimeReversible(Stationary):
+    @extend_docstring_from(Stationary.__init__)
     def __init__(self, *args, **kw):
         """"""
         Stationary.__init__(self, *args, **kw)
@@ -970,7 +984,7 @@ class _CodonPredicates:
         """
         Parameters
         ----------
-        
+
         gc
             a genetic code instance
         """
@@ -1011,6 +1025,7 @@ class _Codon:
 class TimeReversibleCodon(_Codon, _TimeReversibleNucleotide):
     """Core substitution model for codons"""
 
+    @extend_docstring_from(_TimeReversibleNucleotide.__init__)
     def __init__(self, alphabet=None, gc=None, **kw):
         if gc is not None:
             alphabet = moltype.CodonAlphabet(gc=gc)

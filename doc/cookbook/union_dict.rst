@@ -10,53 +10,59 @@ Accessing elements of a ``UnionDict``
 
 Keys in a ``UnionDict`` can be accessed like attributes
 
-.. doctest::
+.. jupyter-execute::
 
-    >>> from cogent3.util.union_dict import UnionDict
-    >>> data = UnionDict(a=2, b={'c': 24, 'd': [25]})
-    >>> data.a
-    2
-    >>> data['a']
-    2
-    >>> data.b.d
-    [25]
+    from cogent3.util.union_dict import UnionDict
 
+    data = UnionDict(a=2, b={"c": 24, "d": [25]})
+    data.a
+
+.. jupyter-execute::
+
+    data["a"]
+
+.. jupyter-execute::
+
+    data.b.d
 
 Updating a ``UnionDict``
 ------------------------
 
 If you use the ``|`` bitwise operator to compare two dicts and the left one is a ``UnionDict``, a union operation is performed.
 
-.. doctest::
+.. jupyter-execute::
 
-    >>> from cogent3.util.union_dict import UnionDict
-    >>> data = UnionDict(a=2, b={'c': 24, 'd': [25]})
-    >>> data.b |= {'d': 25}
-    >>> data.b
-    {'c': 24, 'd': 25}
+    from cogent3.util.union_dict import UnionDict
+
+    data = UnionDict(a=2, b={"c": 24, "d": [25]})
+    data.b |= {"d": 25}
+    data.b
 
 This can also be done using the ``union`` method.
 
-    >>> data.b.union({'d': [25]})
-    >>> data.b
-    {'c': 24, 'd': [25]}
+.. jupyter-execute::
+
+    data.b.union({"d": [25]})
+
+.. jupyter-execute::
+
+    data.b
+    {"c": 24, "d": [25]}
 
 Accessing a non-existent ``UnionDict`` key
 ------------------------------------------
 
-.. doctest::
-    
-    >>> from cogent3.util.union_dict import UnionDict
-    >>> data = UnionDict(a=2, b={'c': 24, 'd': [25]})
-    >>> data["k"]
-    Traceback (most recent call last):
-    KeyError: 'k'
+.. jupyter-execute::
+    :raises: KeyError
+
+    from cogent3.util.union_dict import UnionDict
+
+    data = UnionDict(a=2, b={"c": 24, "d": [25]})
+    data["k"]
 
 But if accessing as an attribute, you get an attribute error.
 
-.. doctest::
-    
-    >>> data.k
-    Traceback (most recent call last):
-    AttributeError: 'k' not a key or attribute
+.. jupyter-execute::
+    :raises: AttributeError
 
+    data.k

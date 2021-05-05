@@ -27,15 +27,14 @@ from itertools import combinations, product
 
 import numpy
 
-from cogent3.format import table
-from cogent3.util.misc import get_object_provenance, open_
+from cogent3.util.misc import atomic_write, get_object_provenance
 
 
 __author__ = "Peter Maxwell"
-__copyright__ = "Copyright 2007-2020, The Cogent Project"
+__copyright__ = "Copyright 2007-2021, The Cogent Project"
 __credits__ = ["Peter Maxwell", "Gavin Huttley", "Ben Kaehler"]
 __license__ = "BSD-3"
-__version__ = "2020.2.7a"
+__version__ = "2021.04.20a"
 __maintainer__ = "Peter Maxwell"
 __email__ = "pm67nz@gmail.com"
 __status__ = "Production"
@@ -250,8 +249,7 @@ class NumericKey(int):
     """a distinct numerical type for use as a DictArray key"""
 
     def __new__(cls, val):
-        result = int.__new__(cls, val)
-        return result
+        return int.__new__(cls, val)
 
 
 class DictArrayTemplate(object):
@@ -311,12 +309,17 @@ class DictArrayTemplate(object):
         return DictArray(array, self)
 
     def interpret_index(self, names):
+        if isinstance(names, numpy.ndarray) and "int" in names.dtype.name:
+            # the numpy item() method casts to the nearest Python type
+            names = tuple(v.item() for v in names)
+
         if not isinstance(names, tuple):
             names = (names,)
+
         index = []
         remaining = []
         for (ordinals, allnames, name) in zip(self.ordinals, self.names, names):
-            if type(name) not in (int, slice):
+            if type(name) not in (int, slice, list, numpy.ndarray):
                 name = ordinals[name]
             elif isinstance(name, slice):
                 start = name.start
@@ -333,48 +336,32 @@ class DictArrayTemplate(object):
                     pass
                 name = slice(start, stop, name.step)
                 remaining.append(allnames.__getitem__(name))
+            elif type(name) in (list, numpy.ndarray):
+                name = [n if type(n) == int else ordinals[n] for n in name]
+                remaining.append([allnames[i] for i in name])
+
             index.append(name)
         remaining.extend(self.names[len(index) :])
-        if remaining:
-            klass = type(self)(*remaining)
-        else:
-            klass = None
+        klass = type(self)(*remaining) if remaining else None
         return (tuple(index), klass)
-
-    def array_repr(self, a):
-        if len(a.shape) == 1:
-            heading = [str(n) for n in self.names[0]]
-            a = a[numpy.newaxis, :]
-        elif len(a.shape) == 2:
-            heading = [""] + [str(n) for n in self.names[1]]
-            a = [[str(name)] + list(row) for (name, row) in zip(self.names[0], a)]
-        else:
-            return "%s dimensional %s" % (len(self.names), type(self).__name__)
-
-        formatted = table.formatted_cells(rows=a, header=heading)
-        return str(table.simple_format(formatted[0], formatted[1], space=4))
-
-    def _get_repr_html(self, a):
-        """returns Table._repr_html_()"""
-        from cogent3.util.table import Table
-
-        if len(a.shape) == 1:
-            heading = [str(n) for n in self.names[0]]
-            a = a[numpy.newaxis, :]
-        elif len(a.shape) == 2:
-            heading = [""] + [str(n) for n in self.names[1]]
-            a = [[str(name)] + list(row) for (name, row) in zip(self.names[0], a)]
-        else:
-            return "%s dimensional %s" % (len(self.names), type(self).__name__)
-        row_ids = len(self.names) == 2
-        t = Table(heading, rows=a, digits=3, row_ids=row_ids, max_width=80)
-        return t._repr_html_(include_shape=False)
 
 
 class DictArray(object):
-    """Wraps a numpy array so that it can be indexed with strings like nested
-    dictionaries (only ordered), for things like substitution matrices and
-    bin probabilities."""
+    """Wraps a numpy array so that it can be indexed with strings. Behaves
+    like nested dictionaries (only ordered).
+
+    Notes
+    -----
+    Used for things like substitution matrices and bin probabilities.
+
+    Indexing can be done via conventional integer based operations, using
+    keys, lists of int/keys.
+
+    Behaviour differs from numpy array indexing when you provide lists of
+    indices. Such indexing is applied sequentially, e.g. darr[[0, 2], [1, 2]]
+    will return the intersection of rows [0, 2] with columns [1, 2]. In numpy,
+    the result would instead be the elements at [0, 1], [2, 2].
+    """
 
     def __init__(self, *args, **kwargs):
         """allow alternate ways of creating for time being"""
@@ -402,6 +389,17 @@ class DictArray(object):
     def to_array(self):
         return self.array
 
+    def __add__(self, other):
+        if not isinstance(other, type(self)):
+            raise TypeError(f"Incompatible types: {type(self)} and {type(other)}")
+
+        if other.template.names != self.template.names:
+            raise ValueError(
+                f"unequal dimension names {self.template.names} != {other.template.names}"
+            )
+
+        return self.template.wrap(self.array + other.array)
+
     def __array__(self, dtype=None):
         array = self.array
         if dtype is not None:
@@ -420,15 +418,20 @@ class DictArray(object):
         shape = self.shape
         result = {}
         if len(names) == 1:
-            result = {names[0][i]: self.array[i] for i in range(len(names[0]))}
+            result = {
+                names[0][i]: v.item() if hasattr(v, "item") else v
+                for i, v in enumerate(self.array)
+            }
         elif flatten:
             for indices in product(*[range(n) for n in shape]):
                 value = self.array[indices]
+                value = value.item() if hasattr(value, "item") else value
                 coord = tuple(n[i] for n, i in zip(names, indices))
                 result[coord] = value
         else:
             for indices in product(*[range(n) for n in shape]):
                 value = self.array[indices]
+                value = value.item() if hasattr(value, "item") else value
                 coord = tuple(n[i] for n, i in zip(names, indices))
                 current = result
                 nested = coord[0]
@@ -440,22 +443,40 @@ class DictArray(object):
 
     def to_rich_dict(self):
         data = self.array.tolist()
-        result = {
+        return {
             "type": get_object_provenance(self.template),
             "array": data,
             "names": self.template.names,
             "version": __version__,
         }
-        return result
 
     def to_json(self):
         return json.dumps(self.to_rich_dict())
 
     def __getitem__(self, names):
         (index, remaining) = self.template.interpret_index(names)
-        result = self.array[index]
+        if list in {type(v) for v in index}:
+            result = self.array
+            for dim, indices in enumerate(index):
+                if isinstance(indices, slice):
+                    indices = (
+                        (indices,)
+                        if dim == 0
+                        else (slice(None, None),) * dim + (indices,)
+                    )
+                    result = result[tuple(indices)]
+                    continue
+
+                if isinstance(indices, int):
+                    indices = [indices]
+
+                result = result.take(indices, axis=dim)
+
+        else:
+            result = self.array[index]
+
         if remaining is not None:
-            result = self.__class__(result, remaining)
+            result = self.__class__(result.reshape(remaining._shape), remaining)
         return result
 
     def __iter__(self):
@@ -476,7 +497,12 @@ class DictArray(object):
         return [(n, self[n]) for n in list(self.keys())]
 
     def __repr__(self):
-        return self.template.array_repr(self.array)
+        if self.array.ndim > 2:
+            return "%s dimensional %s" % (self.array.ndim, type(self).__name__)
+
+        t = self.to_table()
+        t.set_repr_policy(show_shape=False)
+        return str(t)
 
     def __ne__(self, other):
         return not self.__eq__(other)
@@ -531,7 +557,12 @@ class DictArray(object):
         return template.wrap(result)
 
     def _repr_html_(self):
-        return self.template._get_repr_html(self.array)
+        if self.array.ndim > 2:
+            return "%s dimensional %s" % (self.array.ndim, type(self).__name__)
+
+        t = self.to_table()
+        t.set_repr_policy(show_shape=False)
+        return t._repr_html_()
 
     def to_string(self, format="tsv", sep=None):
         """Return the data as a formatted string.
@@ -544,8 +575,12 @@ class DictArray(object):
             A string separator for delineating columns, e.g. ',' or
             '\t'. Overrides format.
         """
-        if format.lower() in ("tsv", "csv"):
-            sep = sep or {"tsv": "\t", "csv": ","}[format.lower()]
+        if format.lower() not in ("tsv", "csv"):
+            msg = f"'{format}' not supported"
+            raise ValueError(msg)
+
+        sep = sep or {"tsv": "\t", "csv": ","}[format.lower()]
+
         data = self.to_dict(flatten=True)
         rows = [[f"dim-{i + 1}" for i in range(self.array.ndim)] + ["value"]] + [
             list(map(lambda x: str(x), row))
@@ -553,9 +588,32 @@ class DictArray(object):
         ]
         return "\n".join([sep.join(row) for row in rows])
 
-    def write(self, path, format="", sep="\t"):
+    def to_table(self):
+        """return Table instance
+
+        Notes
+        -----
+        Raises ValueError if number of dimensions > 2
         """
-        writes a flattened version to path
+        ndim = self.array.ndim
+        if ndim > 2:
+            raise ValueError(f"cannot make 2D table from {ndim}D array")
+
+        from .table import Table
+
+        header = self.template.names[0] if ndim == 1 else self.template.names[1]
+        index = "" if ndim == 2 else None
+        if ndim == 1:
+            data = {c: [v] for c, v in zip(header, self.array)}
+        else:
+            data = {c: self.array[:, i].tolist() for i, c in enumerate(header)}
+            data[""] = self.template.names[0]
+
+        return Table(header=header, data=data, index_name=index)
+
+    def write(self, path, format="tsv", sep="\t"):
+        """writes a flattened version to path
+
         Parameters
         ----------
         path : str
@@ -568,5 +626,5 @@ class DictArray(object):
             provided
         """
         data = self.to_string(format=format, sep=sep)
-        with open_(path, "w") as outfile:
+        with atomic_write(path, mode="wt") as outfile:
             outfile.write(data)

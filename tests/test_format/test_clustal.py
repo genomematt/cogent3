@@ -10,18 +10,17 @@ from cogent3.format.clustal import clustal_from_alignment
 
 
 __author__ = "Jeremy Widmann"
-__copyright__ = "Copyright 2007-2020, The Cogent Project"
+__copyright__ = "Copyright 2007-2021, The Cogent Project"
 __credits__ = ["Jeremy Widmann"]
 __license__ = "BSD-3"
-__version__ = "2020.2.7a"
+__version__ = "2021.04.20a"
 __maintainer__ = "Jeremy Widmann"
 __email__ = "jeremy.widmann@colorado.edu"
 __status__ = "Production"
 
 
 class ClustalTests(TestCase):
-    """Tests for Clustal writer.
-    """
+    """Tests for Clustal writer."""
 
     def setUp(self):
         """Setup for Clustal tests."""
@@ -94,7 +93,7 @@ class ClustalTests(TestCase):
             clustal_from_alignment(self.alignment_dict), self.clustal_with_label
         )
         self.assertEqual(
-            clustal_from_alignment(self.alignment_dict, interleave_len=2),
+            clustal_from_alignment(self.alignment_dict, wrap=2),
             self.clustal_with_label_lw2,
         )
 
@@ -105,7 +104,7 @@ class ClustalTests(TestCase):
             self.clustal_with_label_reordered,
         )
         self.assertEqual(
-            clustal_from_alignment(self.alignment_object, interleave_len=2),
+            clustal_from_alignment(self.alignment_object, wrap=2),
             self.clustal_with_label_lw2_reordered,
         )
 

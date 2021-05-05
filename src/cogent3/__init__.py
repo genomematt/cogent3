@@ -30,22 +30,24 @@ from cogent3.core.moltype import (
     available_moltypes,
     get_moltype,
 )
-from cogent3.core.tree import TreeBuilder, TreeError
+from cogent3.core.tree import PhyloNode, TreeBuilder, TreeError, TreeNode
 from cogent3.evolve.fast_distance import (
     available_distances,
     get_distance_calculator,
 )
 from cogent3.evolve.models import available_models, get_model
+from cogent3.parse.cogent3_json import load_from_json
 from cogent3.parse.newick import parse_string as newick_parse_string
 from cogent3.parse.sequence import FromFilenameParser
-from cogent3.parse.table import autogen_reader, load_delimited
+from cogent3.parse.table import load_delimited
 from cogent3.parse.tree_xml import parse_string as tree_xml_parse_string
 from cogent3.util.misc import get_format_suffixes, open_
 from cogent3.util.table import Table as _Table
+from cogent3.util.table import cast_str_to_array
 
 
 __author__ = ""
-__copyright__ = "Copyright 2007-2020, The Cogent Project"
+__copyright__ = "Copyright 2007-2021, The Cogent Project"
 __credits__ = [
     "Gavin Huttley",
     "Rob Knight",
@@ -69,10 +71,12 @@ __credits__ = [
     "Daniel McDonald",
 ]
 __license__ = "BSD-3"
-__version__ = "2020.2.7a"
+__version__ = "2021.04.20a"
 __maintainer__ = "Gavin Huttley"
 __email__ = "gavin.huttley@anu.edu.au"
 __status__ = "Production"
+
+from cogent3.util.warning import deprecated, discontinued
 
 
 if sys.version_info < (3, 6):
@@ -227,6 +231,15 @@ def load_unaligned_seqs(
     -------
     ``SequenceCollection``
     """
+    file_format, _ = get_format_suffixes(filename)
+    if file_format == "json":
+        return load_from_json(filename, (SequenceCollection,))
+
+    format = format or file_format
+    if not format:
+        msg = "could not determined file format, set using the format argument"
+        raise ValueError(msg)
+
     parser_kw = parser_kw or {}
     for other_kw in ("constructor_kw", "kw"):
         other_kw = kw.pop(other_kw, None) or {}
@@ -274,6 +287,15 @@ def load_aligned_seqs(
     -------
     ``ArrayAlignment`` or ``Alignment`` instance
     """
+    file_format, _ = get_format_suffixes(filename)
+    if file_format == "json":
+        return load_from_json(filename, (Alignment, ArrayAlignment))
+
+    format = format or file_format
+    if not format:
+        msg = "could not determined file format, set using the format argument"
+        raise ValueError(msg)
+
     parser_kw = parser_kw or {}
     for other_kw in ("constructor_kw", "kw"):
         other_kw = kw.pop(other_kw, None) or {}
@@ -292,19 +314,19 @@ def load_aligned_seqs(
 
 def make_table(
     header=None,
-    rows=None,
+    data=None,
     row_order=None,
     digits=4,
     space=4,
     title="",
     max_width=1e100,
-    row_ids=None,
+    index_name=None,
     legend="",
     missing_data="",
     column_templates=None,
-    dtype=None,
     data_frame=None,
     format="simple",
+    **kwargs,
 ):
     """
 
@@ -312,7 +334,7 @@ def make_table(
     ----------
     header
         column headings
-    rows
+    data
         a 2D dict, list or tuple. If a dict, it must have column
         headings as top level keys, and common row labels as keys in each
         column.
@@ -326,16 +348,16 @@ def make_table(
         as implied
     max_width
         maximum column width for printing
-    row_ids
-        if True, the 0'th column is used as row identifiers and keys
-        for slicing.
+    index_name
+        column name with values to be used as row identifiers and keys
+        for slicing. All column values must be unique.
     legend
         table legend
+    missing_data
+        replace missing data with this
     column_templates
         dict of column headings
         or a function that will handle the formatting.
-    dtype
-        optional numpy array typecode.
     limit
         exits after this many lines. Only applied for non pickled data
         file types.
@@ -345,24 +367,37 @@ def make_table(
         output format when using str(Table)
 
     """
-    table = _Table(
+    if any(isinstance(a, str) for a in (header, data)):
+        raise TypeError(f"str type invalid, if its a path use load_table()")
+
+    if "index" in kwargs:
+        deprecated("argument", "index", "index_name", "2021.11")
+        index_name = kwargs.pop("index", index_name)
+
+    data = kwargs.get("rows", data)
+    if data_frame is not None:
+        from pandas import DataFrame
+
+        if not isinstance(data_frame, DataFrame):
+            raise TypeError(f"expecting a DataFrame, got{type(data_frame)}")
+
+        data = {c: data_frame[c].to_numpy() for c in data_frame}
+
+    return _Table(
         header=header,
-        rows=rows,
+        data=data,
         digits=digits,
         row_order=row_order,
         title=title,
-        dtype=dtype,
         column_templates=column_templates,
         space=space,
         missing_data=missing_data,
         max_width=max_width,
-        row_ids=row_ids,
+        index_name=index_name,
         legend=legend,
         data_frame=data_frame,
         format=format,
     )
-
-    return table
 
 
 def load_table(
@@ -374,13 +409,13 @@ def load_table(
     title="",
     missing_data="",
     max_width=1e100,
-    row_ids=None,
+    index_name=None,
     legend="",
     column_templates=None,
-    dtype=None,
     static_column_types=False,
     limit=None,
     format="simple",
+    skip_inconsistent=False,
     **kwargs,
 ):
     """
@@ -399,14 +434,6 @@ def load_table(
         with a numeric/bool data types from the first non-header row.
         This assumes all subsequent entries in that column are of the same type.
         Default is False.
-    header
-        column headings
-    rows
-        a 2D dict, list or tuple. If a dict, it must have column
-        headings as top level keys, and common row labels as keys in each
-        column.
-    row_order
-        the order in which rows will be pulled from the twoDdict
     digits
         floating point resolution
     space
@@ -417,78 +444,88 @@ def load_table(
         character assigned if a row has no entry for a column
     max_width
         maximum column width for printing
-    row_ids
-        if True, the 0'th column is used as row identifiers and keys
-        for slicing.
+    index_name
+        column name with values to be used as row identifiers and keys
+        for slicing. All column values must be unique.
     legend
         table legend
     column_templates
         dict of column headings
         or a function that will handle the formatting.
-    dtype
-        optional numpy array typecode.
     limit
         exits after this many lines. Only applied for non pickled data
         file types.
-    data_frame
-        a pandas DataFrame, supersedes header/rows
     format
         output format when using str(Table)
-
+    skip_inconsistent
+        skips rows that have different length to header row
     """
+    import pathlib
+
+    if not any(isinstance(filename, t) for t in (str, pathlib.PurePath)):
+        raise TypeError(
+            "filename must be string or Path, perhaps you want make_table()"
+        )
+
+    if "index" in kwargs:
+        deprecated("argument", "index", "index_name", "2021.11")
+        index_name = kwargs.pop("index", index_name)
+
     sep = sep or kwargs.pop("delimiter", None)
     file_format, compress_format = get_format_suffixes(filename)
 
-    if not (reader or static_column_types):
-        if file_format == "pickle":
-            f = open_(filename, mode="rb")
-            loaded_table = pickle.load(f)
-            f.close()
-            return _Table(**loaded_table)
-        elif file_format == "csv":
+    if file_format == "json":
+        return load_from_json(filename, (_Table,))
+    elif file_format in ("pickle", "pkl"):
+        f = open_(filename, mode="rb")
+        loaded_table = pickle.load(f)
+        f.close()
+        r = _Table()
+        r.__setstate__(loaded_table)
+        return r
+
+    if reader:
+        with open_(filename, newline=None) as f:
+            data = [row for row in reader(f)]
+            header = data[0]
+            data = {column[0]: column[1:] for column in zip(*data)}
+    else:
+        if file_format == "csv":
             sep = sep or ","
         elif file_format == "tsv":
             sep = sep or "\t"
 
         header, rows, loaded_title, legend = load_delimited(
-            filename, delimiter=sep, limit=limit, **kwargs
+            filename, sep=sep, limit=limit, **kwargs
         )
+        if skip_inconsistent:
+            num_fields = len(header)
+            rows = [r for r in rows if len(r) == num_fields]
+        else:
+            lengths = set(map(len, [header] + rows))
+            if len(lengths) != 1:
+                msg = f"inconsistent number of fields {lengths}"
+                raise ValueError(msg)
+
         title = title or loaded_title
-    else:
-        f = open_(filename, newline=None)
-        if not reader:
-            if file_format == "csv":
-                sep = sep or ","
-            elif file_format == "tsv":
-                sep = sep or "\t"
-            elif not sep:
-                raise ValueError(
-                    "static_column_types option requires a value " "for sep"
-                )
+        data = {column[0]: column[1:] for column in zip(header, *rows)}
 
-            reader = autogen_reader(
-                f, sep, limit=limit, with_title=kwargs.get("with_title", False)
-            )
+    for key, value in data.items():
+        data[key] = cast_str_to_array(value, static_type=static_column_types)
 
-        rows = [row for row in reader(f)]
-        f.close()
-        header = rows.pop(0)
     return make_table(
         header=header,
-        rows=rows,
+        data=data,
         digits=digits,
         title=title,
-        dtype=dtype,
         column_templates=column_templates,
         space=space,
         missing_data=missing_data,
         max_width=max_width,
-        row_ids=row_ids,
+        index_name=index_name,
         legend=legend,
         format=format,
     )
-
-    return table
 
 
 def make_tree(treestring=None, tip_names=None, format=None, underscore_unmunge=False):
@@ -497,15 +534,24 @@ def make_tree(treestring=None, tip_names=None, format=None, underscore_unmunge=F
     Parameters
     ----------
     treestring
-        a newick or xml formatted tree string.
+        a newick or xml formatted tree string
     tip_names
-        a list of tip names.
+        a list of tip names, returns a "star" topology tree
+    format : str
+        indicates treestring is either newick or xml formatted, default
+        is newick
+    underscore_unmunge : bool
+        replace underscores with spaces in all names read, i.e. "sp_name"
+        becomes "sp name"
 
     Notes
     -----
     Underscore unmunging is turned off by default, although it is part
-    of the Newick format. Set ``underscore_unmunge=True`` to replace underscores
-    with spaces in all names read.
+    of the Newick format.
+
+    Returns
+    -------
+    PhyloNode
     """
     assert treestring or tip_names, "must provide either treestring or tip_names"
     if tip_names:
@@ -516,10 +562,7 @@ def make_tree(treestring=None, tip_names=None, format=None, underscore_unmunge=F
 
     if format is None and treestring.startswith("<"):
         format = "xml"
-    if format == "xml":
-        parser = tree_xml_parse_string
-    else:
-        parser = newick_parse_string
+    parser = tree_xml_parse_string if format == "xml" else newick_parse_string
     tree_builder = TreeBuilder().create_edge
     # FIXME: More general strategy for underscore_unmunge
     if parser is newick_parse_string:
@@ -537,19 +580,30 @@ def load_tree(filename, format=None, underscore_unmunge=False):
 
     Parameters
     ----------
-    filename
-        a file containing a newick or xml formatted tree.
+    filename : str
+        a file path containing a newick or xml formatted tree.
+    format : str
+        either newick, xml or cogent3 json, default is newick
+    underscore_unmunge : bool
+        replace underscores with spaces in all names read, i.e. "sp_name"
+        becomes "sp name".
 
     Notes
     -----
     Underscore unmunging is turned off by default, although it is part
-    of the Newick format. Set ``underscore_unmunge=True`` to replace underscores
-    with spaces in all names read.
+    of the Newick format.
+
+    Returns
+    -------
+    PhyloNode
     """
+    file_format, _ = get_format_suffixes(filename)
+    if file_format == "json":
+        return load_from_json(filename, (TreeNode, PhyloNode))
 
     with open_(filename) as tfile:
         treestring = tfile.read()
         if format is None and filename.endswith(".xml"):
             format = "xml"
-    tree = make_tree(treestring, format=format, underscore_unmunge=underscore_unmunge)
-    return tree
+
+    return make_tree(treestring, format=format, underscore_unmunge=underscore_unmunge)

@@ -13,10 +13,10 @@ types and the MolType can be made after the objects are created.
 """
 
 __author__ = "Peter Maxwell, Gavin Huttley and Rob Knight"
-__copyright__ = "Copyright 2007-2020, The Cogent Project"
+__copyright__ = "Copyright 2007-2021, The Cogent Project"
 __credits__ = ["Peter Maxwell", "Gavin Huttley", "Rob Knight", "Daniel McDonald"]
 __license__ = "BSD-3"
-__version__ = "2020.2.7a"
+__version__ = "2021.04.20a"
 __maintainer__ = "Gavin Huttley"
 __email__ = "gavin.huttley@anu.edu.au"
 __status__ = "Production"
@@ -58,7 +58,6 @@ from cogent3.core.alphabet import (
     Enumeration,
     _make_complement_array,
 )
-from cogent3.core.genetic_code import DEFAULT as DEFAULT_GENETIC_CODE
 from cogent3.core.genetic_code import get_code
 from cogent3.core.sequence import (
     ABSequence,
@@ -617,7 +616,7 @@ class MolType(object):
             everything into the alphabet. Slated for deletion.
         preserve_existing_moltypes
             if True (default: False), does not
-            set the MolType of the things added in **kwargs to self.
+            set the MolType of the things added in \*\*kwargs to self.
         make_alphabet_group
             if True, makes an AlphabetGroup relating
             the various alphabets to one another.
@@ -1113,8 +1112,7 @@ class MolType(object):
         if include_gap:
             degen.append(self.gap)
 
-        pos = [i for i, c in enumerate(sequence) if c in degen]
-        return pos
+        return [i for i, c in enumerate(sequence) if c in degen]
 
     def count_degenerate(self, sequence):
         """Counts the degenerate bases in the specified sequence."""
@@ -1281,7 +1279,7 @@ class MolType(object):
 
     def get_css_style(self, colors=None, font_size=12, font_family="Lucida Console"):
         """returns string of CSS classes and {character: <CSS class name>, ...}
-        
+
         Parameters
         ----------
         colors
@@ -1298,21 +1296,17 @@ class MolType(object):
             '.%s_%s{font-family: "%s",monospace !important; '
             "font-size: %dpt !important; color: %s; }"
         )
-        styles = _style_defaults[self.label].copy()
+        label = self.label or ""
+        styles = _style_defaults[label].copy()
         styles.update(
-            {
-                c: "_".join([c, self.label])
-                for c in list(self.alphabet) + ["terminal_ambig"]
-            }
+            {c: "_".join([c, label]) for c in list(self.alphabet) + ["terminal_ambig"]}
         )
 
-        css = []
-        for char in list(styles) + ["ambig"]:
-            css.append(
-                template % (char, self.label, font_family, font_size, colors[char])
-            )
+        css = [
+            template % (char, label, font_family, font_size, colors[char])
+            for char in list(styles) + ["ambig"]
+        ]
 
-        css = "\n".join(css)
         return css, styles
 
 
@@ -1384,11 +1378,13 @@ BYTES = MolType(
     label="bytes",
 )
 
+# the None value catches cases where a moltype has no label attribute
 _style_defaults = {
-    mt.label: defaultdict(_DefaultValue("ambig_%s" % mt.label))
-    for mt in (ASCII, BYTES, DNA, RNA, PROTEIN, PROTEIN_WITH_STOP)
+    getattr(mt, "label", ""): defaultdict(
+        _DefaultValue("ambig_%s" % getattr(mt, "label", ""))
+    )
+    for mt in (ASCII, BYTES, DNA, RNA, PROTEIN, PROTEIN_WITH_STOP, None)
 }
-
 
 # following is a two-state MolType useful for testing
 AB = MolType(
@@ -1419,7 +1415,7 @@ class _CodonAlphabet(Alphabet):
         return self._gc
 
 
-def CodonAlphabet(gc=DEFAULT_GENETIC_CODE, include_stop_codons=False):
+def CodonAlphabet(gc=1, include_stop_codons=False):
     if isinstance(gc, (int, str)):
         gc = get_code(gc)
     if include_stop_codons:
@@ -1494,7 +1490,7 @@ def get_moltype(name):
 
 
 def available_moltypes():
-    """returns Table listing available moltypes"""
+    """returns Table listing the available moltypes"""
     from cogent3.util.table import Table
 
     rows = []
@@ -1505,8 +1501,9 @@ def available_moltypes():
             v = f"{v[:39]}..."
         rows.append([n, num, v])
     header = ["Abbreviation", "Number of states", "Moltype"]
-    title = "Specify a moltype by the string 'Abbreviation' (case insensitive)."
+    title = "Specify a moltype by the Abbreviation (case insensitive)."
 
-    result = Table(header=header, rows=rows, title=title, row_ids=True)
+    result = Table(header=header, data=rows, title=title, index_name="Abbreviation")
     result = result.sorted(columns=["Number of states", "Abbreviation"])
+    result.format_column("Abbreviation", repr)
     return result

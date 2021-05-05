@@ -6,16 +6,21 @@ from numpy.testing import assert_allclose, assert_raises
 
 from cogent3 import load_aligned_seqs, make_aligned_seqs, make_tree
 from cogent3.app import evo as evo_app
-from cogent3.app.result import hypothesis_result
+from cogent3.app.composable import NotCompleted
+from cogent3.app.result import (
+    hypothesis_result,
+    model_collection_result,
+    model_result,
+)
 from cogent3.evolve.models import get_model
 from cogent3.util.deserialise import deserialise_object
 
 
 __author__ = "Gavin Huttley"
-__copyright__ = "Copyright 2007-2020, The Cogent Project"
+__copyright__ = "Copyright 2007-2021, The Cogent Project"
 __credits__ = ["Gavin Huttley"]
 __license__ = "BSD-3"
-__version__ = "2020.2.7a"
+__version__ = "2021.04.20a"
 __maintainer__ = "Gavin Huttley"
 __email__ = "Gavin.Huttley@anu.edu.au"
 __status__ = "Alpha"
@@ -29,16 +34,17 @@ class TestModel(TestCase):
     def test_model_str(self):
         """correct str representation"""
         model = evo_app.model("HKY85", time_het="max")
-        got = str(model)
+        got = " ".join(str(model).splitlines())
+        expect = (
+            "model(type='model', sm='HKY85', tree=None, unique_trees=False, "
+            "name=None, sm_args=None, lf_args=None, "
+            "time_het='max', param_rules=None, "
+            "opt_args=None, split_codons=False, "
+            "show_progress=False, verbose=False)"
+        )
         self.assertEqual(
             got,
-            (
-                "model(type='model', sm='HKY85', tree=None, "
-                "name=None, sm_args=None, lf_args=None, "
-                "time_het='max', param_rules=None, "
-                "opt_args=None, split_codons=False, "
-                "show_progress=False, verbose=False)"
-            ),
+            expect,
         )
 
     def test_model_tree(self):
@@ -55,6 +61,81 @@ class TestModel(TestCase):
         model2 = evo_app.model("HKY85", time_het="max")
         with self.assertRaises(ValueError):
             hyp = evo_app.hypothesis(model1, model2)
+
+    def test_hyp_init(self):
+        """uses user specified init_alt function, or not"""
+        opt_args = dict(max_evaluations=25, limit_action="ignore")
+        model1 = evo_app.model("F81", opt_args=opt_args)
+        model2 = evo_app.model("HKY85", opt_args=opt_args)
+        # defaults to using null for init
+        hyp = evo_app.hypothesis(model1, model2)
+        _data = {
+            "Human": "ATGCGGCTCGCGGAGGCCGCGCTCGCGGAG",
+            "Mouse": "ATGCCCGGCGCCAAGGCAGCGCTGGCGGAG",
+            "Opossum": "ATGCCAGTGAAAGTGGCGGCGGTGGCTGAG",
+        }
+        aln = make_aligned_seqs(data=_data, moltype="dna")
+        result = hyp(aln)
+        self.assertEqual(result.df, 1)
+
+        # user specified function
+        hyp = evo_app.hypothesis(model1, model2, init_alt=lambda x, y: x)
+        result = hyp(aln)
+        self.assertEqual(result.df, 1)
+
+    def test_hyp_init_sequential(self):
+        """uses preceding model to initialise function"""
+        opt_args = dict(max_evaluations=15, limit_action="ignore")
+        model1 = evo_app.model("F81", opt_args=opt_args)
+        model2 = evo_app.model("HKY85", opt_args=opt_args)
+        model3 = evo_app.model("GTR", opt_args=opt_args)
+        # defaults to initialise model3 from model 2 from model1
+        hyp = evo_app.hypothesis(model1, model2, model3, sequential=True)
+        _data = {
+            "Human": "ATGCGGCTCGCGGAGGCCGCGCTCGCGGAG",
+            "Mouse": "ATGCCCGGCGCCAAGGCAGCGCTGGCGGAG",
+            "Opossum": "ATGCCAGTGAAAGTGGCGGCGGTGGCTGAG",
+        }
+        aln = make_aligned_seqs(data=_data, moltype="dna")
+        result = hyp(aln)
+        self.assertTrue(
+            result["F81"].lf.lnL < result["HKY85"].lf.lnL < result["GTR"].lf.lnL
+        )
+
+        # can be set to False, in which case all models start at defaults
+        hyp = evo_app.hypothesis(model1, model2, model3, sequential=False)
+        result = hyp(aln)
+        self.assertFalse(
+            result["F81"].lf.lnL < result["HKY85"].lf.lnL < result["GTR"].lf.lnL
+        )
+
+    def test_model_collection_init_sequential(self):
+        """modelc collection uses preceding model to initialise function"""
+        opt_args = dict(max_evaluations=15, limit_action="ignore")
+        model1 = evo_app.model("F81", opt_args=opt_args)
+        model2 = evo_app.model("HKY85", opt_args=opt_args)
+        model3 = evo_app.model("GTR", opt_args=opt_args)
+        # defaults to initialise model3 from model 2 from model1
+        mod_coll = evo_app.model_collection(model1, model2, model3, sequential=True)
+        _data = {
+            "Human": "ATGCGGCTCGCGGAGGCCGCGCTCGCGGAG",
+            "Mouse": "ATGCCCGGCGCCAAGGCAGCGCTGGCGGAG",
+            "Opossum": "ATGCCAGTGAAAGTGGCGGCGGTGGCTGAG",
+        }
+        aln = make_aligned_seqs(data=_data, moltype="dna")
+        result = mod_coll(aln)
+        self.assertTrue(
+            result["F81"].lf.lnL < result["HKY85"].lf.lnL < result["GTR"].lf.lnL
+        )
+
+        # can be set to False, in which case all models start at defaults
+        mod_coll = evo_app.hypothesis(model1, model2, model3, sequential=False)
+        result = mod_coll(aln)
+        self.assertFalse(
+            result["F81"].lf.lnL < result["HKY85"].lf.lnL < result["GTR"].lf.lnL
+        )
+
+        self.assertIsInstance(result, model_collection_result)
 
     def test_model_time_het(self):
         """support lf time-het argument edge_sets"""
@@ -105,6 +186,8 @@ class TestModel(TestCase):
 
     def test_model_hypothesis_result_repr(self):
         """result objects __repr__ and _repr_html_ methods work correctly"""
+        import re
+
         _data = {
             "Human": "ATGCGGCTCGCGGAGGCCGCGCTCGCGGAG",
             "Mouse": "ATGCCCGGCGCCAAGGCAGCGCTGGCGGAG",
@@ -119,24 +202,39 @@ class TestModel(TestCase):
         )
         hyp = evo_app.hypothesis(model1, model2)
         result = hyp(aln)
+        # check the p-val formatted as %.4f
+        pval = str(result).splitlines()[4].split()[-1]
+        self.assertTrue(re.search(r"\d\.\d+", pval) is not None)
         self.assertIsInstance(result.__repr__(), str)
         self.assertIsInstance(result._repr_html_(), str)
         self.assertIsInstance(result.null.__repr__(), str)
         self.assertIsInstance(result.null._repr_html_(), str)
+        aln = load_aligned_seqs("data/primate_brca1.fasta", moltype="dna")
+        aln = aln.take_seqs(["Human", "Rhesus", "Galago"])[2::3].omit_gap_pos()
+        model1 = evo_app.model(
+            "F81", opt_args=dict(max_evaluations=25, limit_action="ignore")
+        )
+        model2 = evo_app.model(
+            "HKY85", opt_args=dict(max_evaluations=100, limit_action="ignore")
+        )
+        hyp = evo_app.hypothesis(model1, model2)
+        result = hyp(aln)
+        pval = str(result).splitlines()[4].split()[-1]
+        self.assertTrue(re.search(r"[0-9\.]+e-\d+", pval) is not None)
 
     def test_hypothesis_str(self):
         """correct str representation"""
         model1 = evo_app.model("HKY85")
         model2 = evo_app.model("HKY85", name="hky85-max-het", time_het="max")
         hyp = evo_app.hypothesis(model1, model2)
-        got = str(hyp)
+        got = " ".join(str(hyp).splitlines())
         expect = (
             "hypothesis(type='hypothesis', null='HKY85', "
-            "alternates=(model(type='model', sm='HKY85', tree=None, "
+            "alternates=(model(type='model', sm='HKY85', tree=None, unique_trees=False, "
             "name='hky85-max-het', sm_args=None, lf_args=None, "
             "time_het='max', param_rules=None, opt_args=None,"
             " split_codons=False, show_progress=False, verbose=False),),"
-            " init_alt=None)"
+            " sequential=True, init_alt=None)"
         )
         self.assertEqual(got, expect)
 
@@ -244,6 +342,42 @@ class TestModel(TestCase):
         got = result.total_length(length_as="ENS")
         assert_allclose(got, expect)
 
+    def test_model_tree_unique_trees(self):
+        """handles case of using unique trees for each alignment"""
+        with self.assertRaises(AssertionError):
+            model1 = evo_app.model("GN", tree="(a,b,c)", unique_trees=True)
+        _data1 = {
+            "Human": "ATGCGGCTCGCGGAGGCCGCGCTCGCGGAG",
+            "Mouse": "ATGCCCGGCGCCAAGGCAGCGCTGGCGGAG",
+            "Opossum": "ATGCCAGTGAAAGTGGCGGCGGTGGCTGAG",
+        }
+        _data2 = {
+            "Dog": "ATGCGGCTCGCGGAGGCCGCGCTCGCGGAG",
+            "Mouse": "ATGCCCGGCGCCAAGGCAGCGCTGGCGGAG",
+            "Opossum": "ATGCCAGTGAAAGTGGCGGCGGTGGCTGAG",
+        }
+
+        aln1 = make_aligned_seqs(data=_data1, moltype="dna")
+        aln2 = make_aligned_seqs(data=_data2, moltype="dna")
+        model = evo_app.model(
+            "GN",
+            unique_trees=True,
+            opt_args=dict(max_evaluations=2, limit_action="ignore"),
+        )
+        for aln in (aln1, aln2):
+            result = model(aln)
+            self.assertIsInstance(result, model_result)
+
+        # but the second one fails if unique_trees=False
+        model = evo_app.model(
+            "GN",
+            unique_trees=False,
+            opt_args=dict(max_evaluations=2, limit_action="ignore"),
+        )
+        for aln, expect_type in ((aln1, model_result), (aln2, NotCompleted)):
+            result = model(aln)
+            self.assertIsInstance(result, expect_type)
+
 
 def _make_getter(val):
     def call(**kwargs):
@@ -253,22 +387,23 @@ def _make_getter(val):
 
 
 def _make_hyp(aic1, aic2, aic3, nfp1, nfp2, nfp3):
-    null = MagicMock()
-    null.name = "unrooted"
-    null.lf.get_aic = _make_getter(aic1)
-    null.nfp = nfp1
-    alt1 = MagicMock()
-    alt1.name = "alt1"
-    alt1.lf.get_aic = _make_getter(aic2)
-    alt1.nfp = nfp2
-    alt2 = MagicMock()
-    alt2.name = "alt2"
-    alt2.lf.get_aic = _make_getter(aic3)
-    alt2.nfp = nfp3
+    null = _make_mock_result("unrooted", aic1, nfp1)
+    alt1 = _make_mock_result("alt1", aic2, nfp2)
+    alt2 = _make_mock_result("alt2", aic3, nfp3)
+    # this is a really ugly hack to address type validation on result setitem!
+    hypothesis_result._item_types = ("model_result", "MagicMock")
     hyp = hypothesis_result("unrooted", source="something")
     for m in (null, alt1, alt2):
         hyp[m.name] = m
     return hyp
+
+
+def _make_mock_result(arg0, arg1, arg2):
+    result = MagicMock()
+    result.name = arg0
+    result.lf.get_aic = _make_getter(arg1)
+    result.nfp = arg2
+    return result
 
 
 class TestHypothesisResult(TestCase):
@@ -361,7 +496,6 @@ class TestHypothesisResult(TestCase):
         tree = "(Mouse,Human,Opossum)"
         m1 = evo_app.model("JTT92", tree=tree)
         r = m1(aln)
-        print(r)
         self.assertEqual(r.origin, "model")
 
 

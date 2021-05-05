@@ -19,10 +19,10 @@ from cogent3.util.dict_array import DictArray
 
 
 __author__ = "Catherine Lozupone"
-__copyright__ = "Copyright 2007-2020, The Cogent Project"
+__copyright__ = "Copyright 2007-2021, The Cogent Project"
 __credits__ = ["Catherine Lozuopone", "Rob Knight", "Peter Maxwell"]
 __license__ = "BSD-3"
-__version__ = "2020.2.7a"
+__version__ = "2021.04.20a"
 __maintainer__ = "Catherine Lozupone"
 __email__ = "lozupone@colorado.edu"
 __status__ = "Production"
@@ -157,8 +157,7 @@ def UPGMA_cluster(matrix, node_order, large_number):
 
 
 def inputs_from_dict_array(darr):
-    """makes inputs for UPGMA_cluster from a DictArray object
-    """
+    """makes inputs for UPGMA_cluster from a DictArray object"""
     darr.array += numpy.eye(darr.shape[0]) * BIG_NUM
     nodes = list(map(PhyloNode, darr.keys()))
     return darr.array, nodes

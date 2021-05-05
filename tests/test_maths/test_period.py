@@ -1,36 +1,26 @@
+from unittest import TestCase, main
+
 from numpy import arange, array, convolve, exp, float64, pi, random, sin, zeros
 
 from cogent3.maths.period import _autocorr_inner2 as py_autocorr_inner
 from cogent3.maths.period import _goertzel_inner as py_goertzel_inner
 from cogent3.maths.period import _ipdft_inner2 as py_ipdft_inner
 from cogent3.maths.period import auto_corr, dft, goertzel, hybrid, ipdft
-from cogent3.util.unit_test import TestCase, main
-
-
-# because we'll be comparing python and pyrexed implementations of the same
-# algorithms I'm separating out those imports to make it clear
-
-
-try:
-    from cogent3.maths._period import (
-        ipdft_inner as pyx_ipdft_inner,
-        goertzel_inner as pyx_goertzel_inner,
-        autocorr_inner as pyx_autocorr_inner,
-    )
-
-    pyrex_available = True
-except ImportError:
-    pyrex_available = False
+from cogent3.maths.period_numba import autocorr_inner as numba_autocorr_inner
+from cogent3.maths.period_numba import goertzel_inner as numba_goertzel_inner
+from cogent3.maths.period_numba import ipdft_inner as numba_ipdft_inner
 
 
 __author__ = "Hua Ying, Julien Epps and Gavin Huttley"
-__copyright__ = "Copyright 2007-2020, The Cogent Project"
+__copyright__ = "Copyright 2007-2021, The Cogent Project"
 __credits__ = ["Julien Epps", "Hua Ying", "Gavin Huttley"]
 __license__ = "BSD-3"
-__version__ = "2020.2.7a"
+__version__ = "2021.04.20a"
 __maintainer__ = "Gavin Huttley"
 __email__ = "Gavin.Huttley@anu.edu.au"
 __status__ = "Production"
+
+from numpy.testing import assert_allclose, assert_almost_equal, assert_equal
 
 
 class TestPeriod(TestCase):
@@ -44,8 +34,6 @@ class TestPeriod(TestCase):
 
     def test_inner_funcs(self):
         """python and pyrexed implementation should be the same"""
-        if pyrex_available is not True:
-            return
         x = array(
             [
                 0.04874203,
@@ -152,8 +140,8 @@ class TestPeriod(TestCase):
         )
         N = 100
         period = 10
-        self.assertFloatEqual(
-            py_goertzel_inner(x, N, period), pyx_goertzel_inner(x, N, period)
+        assert_allclose(
+            py_goertzel_inner(x, N, period), numba_goertzel_inner(x, N, period)
         )
 
         ulim = 8
@@ -173,9 +161,9 @@ class TestPeriod(TestCase):
             ]
         )
         py_result = py_ipdft_inner(x, X, W, ulim, N)
-        pyx_result = pyx_ipdft_inner(x, X, W, ulim, N)
-        for i, j in zip(py_result, pyx_result):
-            self.assertFloatEqual(abs(i), abs(j))
+        numba_result = numba_ipdft_inner(x, X, W, ulim, N)
+        for i, j in zip(py_result, numba_result):
+            assert_allclose(abs(i), abs(j), rtol=1e-6)
 
         x = array(
             [
@@ -282,19 +270,19 @@ class TestPeriod(TestCase):
             ]
         )
         py_xc = zeros(2 * len(x) - 1, dtype=float64)
-        pyx_xc = py_xc.copy()
+        numba_xc = py_xc.copy()
         N = 100
         py_autocorr_inner(x, py_xc, N)
-        pyx_autocorr_inner(x, pyx_xc, N)
-        for i, j in zip(py_xc, pyx_xc):
-            self.assertFloatEqual(i, j)
+        numba_autocorr_inner(x, numba_xc, N)
+        for i, j in zip(py_xc, numba_xc):
+            assert_allclose(i, j)
 
     def test_autocorr(self):
         """correctly compute autocorrelation"""
         s = [1, 1, 1, 1]
         X, periods = auto_corr(s, llim=-3, ulim=None)
         exp_X = array([1, 2, 3, 4, 3, 2, 1], dtype=float)
-        self.assertEqual(X, exp_X)
+        assert_equal(X, exp_X)
 
         auto_x, auto_periods = auto_corr(self.sig, llim=2, ulim=50)
         max_idx = list(auto_x).index(max(auto_x))
@@ -328,7 +316,7 @@ class TestPeriod(TestCase):
             )
         )
         X = abs(X)
-        self.assertFloatEqual(X, exp_X, eps=1e-3)
+        assert_almost_equal(X, exp_X, decimal=4)
 
         ipdft_x, ipdft_periods = ipdft(self.sig, llim=2, ulim=50)
         ipdft_x = abs(ipdft_x)
@@ -339,7 +327,7 @@ class TestPeriod(TestCase):
     def test_goertzel(self):
         """goertzel and ipdft should be the same"""
         ipdft_pwr, ipdft_prd = ipdft(self.sig, llim=10, ulim=10)
-        self.assertFloatEqual(goertzel(self.sig, 10), ipdft_pwr)
+        assert_allclose(goertzel(self.sig, 10), ipdft_pwr)
 
     def test_hybrid(self):
         """correctly compute hybrid statistic"""
@@ -357,9 +345,9 @@ class TestPeriod(TestCase):
         hybrid_ipdft_autocorr_stats, hybrid_periods = hybrid(
             self.sig, llim=None, ulim=50, return_all=True
         )
-        self.assertEqual(hybrid_ipdft_autocorr_stats[0], hybrid_x)
-        self.assertEqual(hybrid_ipdft_autocorr_stats[1], ipdft_pwr)
-        self.assertEqual(hybrid_ipdft_autocorr_stats[2], auto_x)
+        assert_equal(hybrid_ipdft_autocorr_stats[0], hybrid_x)
+        assert_equal(hybrid_ipdft_autocorr_stats[1], ipdft_pwr)
+        assert_equal(hybrid_ipdft_autocorr_stats[2], auto_x)
 
         ipdft_pwr, ipdft_prd = ipdft(self.sig, llim=10, ulim=10)
         auto_x, auto_periods = auto_corr(self.sig, llim=10, ulim=10)

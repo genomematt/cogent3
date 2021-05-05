@@ -9,10 +9,10 @@ from cogent3.util import progress_display as UI
 
 
 __author__ = "Peter Maxwell"
-__copyright__ = "Copyright 2007-2020, The Cogent Project"
+__copyright__ = "Copyright 2007-2021, The Cogent Project"
 __credits__ = ["Peter Maxwell", "Gavin Huttley"]
 __license__ = "BSD-3"
-__version__ = "2020.2.7a"
+__version__ = "2021.04.20a"
 __maintainer__ = "Peter Maxwell"
 __email__ = "pm67nz@gmail.com"
 __status__ = "Production"
@@ -41,7 +41,7 @@ def TreeAlign(
     Parameters
     ----------
     model
-        a substitution model
+        a substitution model or the name of one, see available_models()
     seqs
         a sequence collection
     indel_rate, indel_length
@@ -54,25 +54,23 @@ def TreeAlign(
         override ests_from_pairwise.
 
     """
-    _exclude_params = ["mprobs", "rate", "bin_switch"]
-    if param_vals:
-        param_vals = dict(param_vals)
-    else:
-        param_vals = {}
-    if isinstance(seqs, dict):
-        seq_names = list(seqs.keys())
-    else:
-        seq_names = seqs.names
+    from cogent3 import get_model
 
+    _exclude_params = ["mprobs", "rate", "bin_switch"]
+    param_vals = dict(param_vals) if param_vals else {}
+    seq_names = list(seqs.keys()) if isinstance(seqs, dict) else seqs.names
     two_seqs = len(seq_names) == 2
 
+    model = get_model(model)
     if tree:
         tip_names = tree.get_tip_names()
         tip_names.sort()
         seq_names.sort()
-        assert tip_names == seq_names, (
-            "names don't match between seqs and tree: tree=%s; seqs=%s"
-            % (tip_names, seq_names)
+        assert (
+            tip_names == seq_names
+        ), "names don't match between seqs and tree: tree=%s; seqs=%s" % (
+            tip_names,
+            seq_names,
         )
         ests_from_pairwise = False
     elif two_seqs:
@@ -115,6 +113,7 @@ def TreeAlign(
     lnL = LF.get_log_likelihood()
     edge = lnL.edge
     align = edge.get_viterbi_path().get_alignment()
+    align = align.to_moltype(model.moltype)
     param_vals.update(
         dict(
             indel_length=indel_length,

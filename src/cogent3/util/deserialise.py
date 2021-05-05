@@ -13,10 +13,10 @@ from cogent3.util.misc import open_, path_exists
 
 
 __author__ = ["Gavin Huttley"]
-__copyright__ = "Copyright 2007-2020, The Cogent Project"
+__copyright__ = "Copyright 2007-2021, The Cogent Project"
 __credits__ = ["Gavin Huttley"]
 __license__ = "BSD-3"
-__version__ = "2020.2.7a"
+__version__ = "2021.04.20a"
 __maintainer__ = "Gavin Huttley"
 __email__ = "Gavin.Huttley@anu.edu.au"
 __status__ = "Production"
@@ -26,6 +26,8 @@ def _get_class(provenance):
     index = provenance.rfind(".")
     assert index > 0
     klass = provenance[index + 1 :]
+    nc = "NotCompleted"
+    klass = nc if nc in klass else klass
     mod = import_module(provenance[:index])
     klass = getattr(mod, klass)
     return klass
@@ -37,7 +39,11 @@ def deserialise_tabular(data):
     type_ = data.pop("type")
     klass = _get_class(type_)
     if type_.endswith("Table"):
-        result = klass(**data)
+        if "init_table" in data:
+            result = klass()
+            result.__setstate__(data)
+        else:
+            result = klass(**data)
     elif "dictarray" in type_.lower():
         named_dims = data.pop("names")
         array = data.pop("array")
@@ -63,8 +69,7 @@ def deserialise_not_completed(data):
     init = data.pop("not_completed_construction")
     args = init.pop("args")
     kwargs = init.pop("kwargs")
-    result = klass(*args, **kwargs)
-    return result
+    return klass(*args, **kwargs)
 
 
 def deserialise_map_spans(map_element):
@@ -78,8 +83,7 @@ def deserialise_map_spans(map_element):
         spans.append(instance)
 
     map_element["spans"] = spans
-    map_instance = map_klass(**map_element)
-    return map_instance
+    return map_klass(**map_element)
 
 
 def deserialise_annotation(data, parent):
@@ -256,7 +260,6 @@ def deserialise_likelihood_function(data):
     """returns a cogent3 likelihood function instance"""
     data.pop("version", None)
     model = deserialise_substitution_model(data.pop("model"))
-    aln = deserialise_seq_collections(data.pop("alignment"))
     tree = deserialise_tree(data.pop("tree"))
     constructor_args = data.pop("likelihood_construction")
     motif_probs = data.pop("motif_probs")
@@ -264,9 +267,18 @@ def deserialise_likelihood_function(data):
     name = data.pop("name", None)
     lf = model.make_likelihood_function(tree, **constructor_args)
     lf.set_name(name)
+    lf = model.make_likelihood_function(tree, **constructor_args)
+    if isinstance(constructor_args["loci"], list):
+        align = data["alignment"]
+        aln = [deserialise_seq_collections(align[k]) for k in align]
+        mprobs = [motif_probs[k] for k in motif_probs]
+    else:
+        aln = deserialise_seq_collections(data.pop("alignment"))
+        mprobs = [motif_probs]
     lf.set_alignment(aln)
     with lf.updates_postponed():
-        lf.set_motif_probs(motif_probs)
+        for motif_probs in mprobs:
+            lf.set_motif_probs(motif_probs)
         for rule in param_rules:
             lf.set_param_rule(**rule)
     return lf

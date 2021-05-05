@@ -1,4 +1,5 @@
 import os
+import warnings
 
 from tqdm import tqdm
 
@@ -23,16 +24,17 @@ from .composable import (
 from .result import (
     bootstrap_result,
     hypothesis_result,
+    model_collection_result,
     model_result,
     tabular_result,
 )
 
 
 __author__ = "Gavin Huttley"
-__copyright__ = "Copyright 2007-2020, The Cogent Project"
+__copyright__ = "Copyright 2007-2021, The Cogent Project"
 __credits__ = ["Gavin Huttley"]
 __license__ = "BSD-3"
-__version__ = "2020.2.7a"
+__version__ = "2021.04.20a"
 __maintainer__ = "Gavin Huttley"
 __email__ = "Gavin.Huttley@anu.edu.au"
 __status__ = "Alpha"
@@ -50,6 +52,7 @@ class model(ComposableModel):
         self,
         sm,
         tree=None,
+        unique_trees=False,
         name=None,
         sm_args=None,
         lf_args=None,
@@ -69,12 +72,15 @@ class model(ComposableModel):
             if None, assumes a star phylogeny (only valid for 3 taxa). Can be a
             newick formatted tree, a path to a file containing one, or a Tree
             instance.
+        unique_trees: bool
+            whether to specify a unique tree per alignment. Only applies if
+            number of sequences equals 3.
         name
             name of the model
-        sm_args
+        sm_args : dict
             arguments to be passed to the substitution model constructor, e.g.
             dict(optimise_motif_probs=True)
-        lf_args
+        lf_args : dict
             arguments to be passed to the likelihood function constructor
         time_het
             'max' or a list of dicts corresponding to edge_sets, e.g.
@@ -84,7 +90,7 @@ class model(ComposableModel):
         param_rules
             other parameter rules, passed to the likelihood function
             set_param_rule() method
-        opt_args
+        opt_args : dict
             arguments for the numerical optimiser, e.g.
             dict(max_restarts=5, tolerance=1e-6, max_evaluations=1000,
             limit_action='ignore')
@@ -109,6 +115,10 @@ class model(ComposableModel):
         )
         self._verbose = verbose
         self._formatted_params()
+        assert not (
+            tree and unique_trees
+        ), "cannot provide a tree when unique_trees is True"
+        self._unique_trees = unique_trees
         sm_args = sm_args or {}
         if type(sm) == str:
             sm = get_model(sm, **sm_args)
@@ -175,7 +185,7 @@ class model(ComposableModel):
             lf.apply_param_rules([rule])
 
         if initialise:
-            initialise(lf, identifier)
+            lf = initialise(lf, identifier)
 
         self._lf = lf
 
@@ -204,7 +214,7 @@ class model(ComposableModel):
 
     def fit(self, aln, initialise=None, construct=True, **opt_args):
         moltypes = {aln.moltype.label, self._sm.moltype.label}
-        if moltypes == {"protein", "dna"} or moltypes == {"protein", "rna"}:
+        if moltypes in [{"protein", "dna"}, {"protein", "rna"}]:
             msg = (
                 f"substitution model moltype '{self._sm.moltype.label}' and"
                 f" alignment moltype '{aln.moltype.label}' are incompatible"
@@ -212,8 +222,8 @@ class model(ComposableModel):
             return NotCompleted("ERROR", self, msg, source=aln)
 
         evaluation_limit = opt_args.get("max_evaluations", None)
-        if self._tree is None:
-            assert len(aln.names) == 3
+        if self._tree is None or self._unique_trees:
+            assert len(aln.names) == 3, "to model more than 3, you must provide a tree"
             self._tree = make_tree(tip_names=aln.names)
 
         result = model_result(
@@ -251,22 +261,64 @@ class model(ComposableModel):
         return result
 
 
-class hypothesis(ComposableHypothesis):
-    """Specify a hypothesis through defining two models. Returns a
-    hypothesis_result."""
+class _InitFrom:
+    """holds a likelihood function that will be used to initialise others"""
+
+    def __init__(self, nested):
+        """nested: a model_result or a likelihood function"""
+        if hasattr(nested, "lf"):
+            nested = nested.lf
+        self.nested = nested
+
+    def __call__(self, other, *args, **kwargs):
+        try:
+            other.initialise_from_nested(self.nested)
+        except:
+            pass
+        return other
+
+
+class model_collection(ComposableHypothesis):
+    """Fits a collection of models. Returns a
+    model_collection_result."""
 
     _input_types = (ALIGNED_TYPE, SERIALISABLE_TYPE)
     _output_types = (RESULT_TYPE, HYPOTHESIS_RESULT_TYPE, SERIALISABLE_TYPE)
     _data_types = ("ArrayAlignment", "Alignment")
 
-    def __init__(self, null, *alternates, init_alt=None):
-        # todo document! init_alt needs to be able to take null, alt and *args
-        super(hypothesis, self).__init__(
+    def __init__(self, null, *alternates, sequential=True, init_alt=None):
+        """
+        Parameters
+        ----------
+        null : model
+            The null model instance
+        alternates : model or series of models
+            The alternate model or a series of them
+        sequential : bool
+            initialise each likelihood function from the preceding model fit.
+            If False, and init_alt is not specified, each function is optimised
+            from default values.
+        init_alt : callable
+            A callback function for initialising the alternate model
+            likelihood function prior to optimisation. It must take 2 input
+            arguments and return the modified alternate likelihood function.
+            Default is to use MLEs from the null model.
+
+        Notes
+        -----
+        To stop the null MLEs from being used, provide a lambda function that
+        just returns the likelihood function, e.g. init_alt=lambda lf, identifier: lf
+        """
+        super(model_collection, self).__init__(
             input_types=self._input_types,
             output_types=self._output_types,
             data_types=self._data_types,
         )
         self._formatted_params()
+        if sequential and init_alt:
+            warnings.warn("init_alt is specified, ignoring sequential")
+            sequential = False
+
         self.null = null
         names = {a.name for a in alternates}
         names.add(null.name)
@@ -277,24 +329,24 @@ class hypothesis(ComposableHypothesis):
         self._alts = alternates
         self.func = self.test_hypothesis
         self._init_alt = init_alt
+        self._sequential = sequential
 
-    def _initialised_alt_from_null(self, null, aln):
-        def init(alt, *args, **kwargs):
-            try:
-                alt.initialise_from_nested(null.lf)
-            except:
-                pass
-            return alt
+    def _make_result(self, aln):
+        return model_collection_result(source=aln.info)
 
+    def _initialised_alt(self, null, aln):
         if callable(self._init_alt):
-            init_func = self._init_alt(null)
-        else:
-            init_func = init
+            init_func = self._init_alt
+        elif not self._sequential:
+            init_func = None
 
         results = []
         for alt in self._alts:
+            if self._sequential:
+                init_func = _InitFrom(null)
             result = alt(aln, initialise=init_func)
             results.append(result)
+            null = result
         return results
 
     def test_hypothesis(self, aln):
@@ -308,7 +360,7 @@ class hypothesis(ComposableHypothesis):
             return null
 
         try:
-            alts = [alt for alt in self._initialised_alt_from_null(null, aln)]
+            alts = [alt for alt in self._initialised_alt(null, aln)]
         except ValueError as err:
             msg = f"Hypothesis alt had bounds error {aln.info.source}"
             return NotCompleted("ERROR", self, msg, source=aln)
@@ -321,9 +373,17 @@ class hypothesis(ComposableHypothesis):
         results = {alt.name: alt for alt in alts}
         results.update({null.name: null})
 
-        result = hypothesis_result(name_of_null=null.name, source=aln.info.source)
+        result = self._make_result(aln)
         result.update(results)
         return result
+
+
+class hypothesis(model_collection):
+    """Specify a hypothesis through defining two models. Returns a
+    hypothesis_result."""
+
+    def _make_result(self, aln):
+        return hypothesis_result(name_of_null=self.null.name, source=aln.info)
 
 
 class bootstrap(ComposableHypothesis):
@@ -739,8 +799,7 @@ class natsel_zhang(ComposableHypothesis):
             )
         )
         alt_args["param_rules"] = rules
-        alt = model(**alt_args)
-        return alt
+        return model(**alt_args)
 
     def test_hypothesis(self, aln, *args, **kwargs):
         null_result = self.null(aln)
@@ -899,8 +958,7 @@ class natsel_sitehet(ComposableHypothesis):
             )
         )
         alt_args["param_rules"] = rules
-        alt = model(**alt_args)
-        return alt
+        return model(**alt_args)
 
     def test_hypothesis(self, aln, *args, **kwargs):
         null_result = self.null(aln)

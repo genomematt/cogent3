@@ -4,16 +4,16 @@ import sys
 import threading
 import time
 
-from tqdm import tqdm, tqdm_notebook
+from tqdm import notebook, tqdm
 
 from cogent3.util import parallel as PAR
 
 
 __author__ = "Sheng Han Moses Koh"
-__copyright__ = "Copyright 2007-2020, The Cogent Project"
+__copyright__ = "Copyright 2007-2021, The Cogent Project"
 __credits__ = ["Peter Maxwell", "Sheng Han Moses Koh"]
 __license__ = "BSD-3"
-__version__ = "2020.2.7a"
+__version__ = "2021.04.20a"
 __maintainer__ = "Gavin Huttley"
 __email__ = "gavin.huttley@anu.edu.au"
 __status__ = "Alpha"
@@ -62,6 +62,7 @@ class ProgressContext:
                 leave=True,
                 bar_format="{desc} {percentage:3.0f}%|{bar}|{elapsed}<{remaining}",
                 mininterval=self.mininterval,
+                dynamic_ncols=True,
             )
 
     def subcontext(self, *args, **kw):
@@ -181,7 +182,7 @@ def display_wrap(slow_function):
             if sys.stdout.isatty():
                 klass = tqdm
             elif using_notebook():
-                klass = tqdm_notebook
+                klass = notebook.tqdm
             elif isinstance(sys.stdout, io.FileIO):
                 klass = LogFileOutput
             else:

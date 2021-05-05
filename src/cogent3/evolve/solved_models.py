@@ -1,8 +1,5 @@
 """P matrices for some DNA models can be calculated without going via the
-intermediate rate matrix Q.  A Cython implementation of this calculation can
-be used when Q is not required, for example during likelihood tree optimisation.
-Equivalent pure python code is NOT provided because it is typically slower
-than the rate-matrix based alternative and provides no extra functionality.
+intermediate rate matrix Q.
 """
 
 import numpy
@@ -15,22 +12,15 @@ from cogent3.evolve.substitution_model import (
     TimeReversibleNucleotide,
 )
 from cogent3.maths.matrix_exponentiation import FastExponentiator
-from cogent3.util.modules import ExpectedImportError, importVersionedModule
 
+from . import solved_models_numba as _solved_models
 
-try:
-    from . import _solved_models
-
-    # _solved_models = importVersionedModule('_solved_models', globals(),
-    # (1, 0), "only matrix exponentiating DNA models")
-except ImportError:
-    _solved_models = None
 
 __author__ = "Peter Maxwell"
-__copyright__ = "Copyright 2007-2020, The Cogent Project"
+__copyright__ = "Copyright 2007-2021, The Cogent Project"
 __credits__ = ["Peter Maxwell", "Gavin Huttley"]
 __license__ = "BSD-3"
-__version__ = "2020.2.7a"
+__version__ = "2021.04.20a"
 __maintainer__ = "Peter Maxwell"
 __email__ = "pm67nz@gmail.com"
 __status__ = "Production"
@@ -95,7 +85,7 @@ def TN93(**kw):
 
 
 def HKY85(**kw):
-    """Hasegawa, Kishino and Yanamo 1985 model"""
+    """Hasegawa, Kishino and Yano 1985 model"""
     kw["recode_gaps"] = True
     return _solved_nucleotide("HKY85", [kappa], **kw)
 

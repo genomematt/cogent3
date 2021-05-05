@@ -1,3 +1,5 @@
+.. _data_links:
+
 Data Files Used in the Documentation
 ====================================
 
@@ -7,7 +9,7 @@ All data files referred to in the documentation can be download by clicking on t
 
 :download:`abglobin_aa.phylip <data/abglobin_aa.phylip>`
 
-:download:`dists_for_phylo.pickle <data/dists_for_phylo.pickle>`
+:download:`dists_for_phylo.json <data/dists_for_phylo.json>`
 
 :download:`long_testseqs.fasta <data/long_testseqs.fasta>`
 
@@ -51,3 +53,6 @@ All data files referred to in the documentation can be download by clicking on t
 
 :download:`tbp.jaspar <data/tbp.jaspar>`
 
+:download:`stats.tsv <data/stats.tsv>`
+
+:download:`CerebellumDukeDNaseSeq.pk <data/CerebellumDukeDNaseSeq.pk>`

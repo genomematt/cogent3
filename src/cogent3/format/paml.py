@@ -6,16 +6,15 @@ from cogent3.format.util import _AlignmentFormatter
 
 
 __author__ = "Thomas La"
-__copyright__ = "Copyright 2007-2020, The Cogent Project"
+__copyright__ = "Copyright 2007-2021, The Cogent Project"
 __credits__ = ["Jeremy Widmann", "Rob Knight", "Gavin Huttley", "Thomas La"]
 __license__ = "BSD-3"
-__version__ = "2020.2.7a"
+__version__ = "2021.04.20a"
 __maintainer__ = "Thomas La"
 
 
 def alignment_to_paml(alignment_dict, block_size=60, order=None):
-    """Returns a Paml string given an alignment.
-    """
+    """Returns a Paml string given an alignment."""
     return PamlFormatter().format(
         alignment_dict, block_size, [] if order is None else order
     )

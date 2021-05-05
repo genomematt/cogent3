@@ -5,7 +5,7 @@ Each leaf holds a sequence.  Used by a likelihood function."""
 
 import numpy
 
-from cogent3.util.modules import ExpectedImportError, importVersionedModule
+from . import likelihood_tree_numba as likelihood_tree
 
 
 numpy.seterr(all="ignore")
@@ -13,21 +13,13 @@ numpy.seterr(all="ignore")
 numerictypes = numpy.core.numerictypes.sctype2char
 
 __author__ = "Peter Maxwell"
-__copyright__ = "Copyright 2007-2020, The Cogent Project"
+__copyright__ = "Copyright 2007-2021, The Cogent Project"
 __credits__ = ["Peter Maxwell", "Rob Knight"]
 __license__ = "BSD-3"
-__version__ = "2020.2.7a"
+__version__ = "2021.04.20a"
 __maintainer__ = "Peter Maxwell"
 __email__ = "pm67nz@gmail.com"
 __status__ = "Production"
-
-try:
-    from . import _likelihood_tree as pyrex
-
-    # pyrex = importVersionedModule('_likelihood_tree', globals(),
-    # (2, 1), "pure Python/NumPy likelihoodihood tree")
-except ImportError:
-    pyrex = None
 
 
 class _LikelihoodTreeEdge(object):
@@ -73,10 +65,12 @@ class _LikelihoodTreeEdge(object):
         self.uniq = numpy.asarray(uniq, self.integer_type)
 
         # For faster math, a contiguous index array for each child
-        self.indexes = [
-            numpy.array(list(ch), self.integer_type)
-            for ch in numpy.transpose(self.uniq)
-        ]
+        self.indexes = numpy.ascontiguousarray(
+            [
+                numpy.array(list(ch), self.integer_type)
+                for ch in numpy.transpose(self.uniq)
+            ]
+        )
 
         # If this is the root it will need to weight the total
         # log likelihoods by these counts:
@@ -129,7 +123,9 @@ class _LikelihoodTreeEdge(object):
             rows = list(zip(motifs, observed, expected))
             rows.sort(key=lambda row: (-row[1], row[0]))
             table = Table(
-                header=["Pattern", "Observed", "Expected"], rows=rows, row_ids=True
+                header=["Pattern", "Observed", "Expected"],
+                data=rows,
+                index_name="Pattern",
             )
             return (G, table)
         else:
@@ -166,7 +162,7 @@ class _LikelihoodTreeEdge(object):
         )
 
 
-class _PyLikelihoodTreeEdge(_LikelihoodTreeEdge):
+class LikelihoodTreeEdge(_LikelihoodTreeEdge):
     # Should be a subclass of regular tree edge?
 
     float_type = numerictypes(float)
@@ -177,10 +173,15 @@ class _PyLikelihoodTreeEdge(_LikelihoodTreeEdge):
     LOG_BASE = numpy.log(BASE)
 
     def sum_input_likelihoodsR(self, result, *likelihoods):
-        result[:] = 1.0
-        for (i, index) in enumerate(self.indexes):
-            result *= numpy.take(likelihoods[i], index, 0)
-        return result
+        if not self.indexes.flags["C_CONTIGUOUS"]:
+            self.indexes = numpy.ascontiguousarray(self.indexes)
+        if not result.flags["C_CONTIGUOUS"]:
+            result = numpy.ascontiguousarray(result)
+        return likelihood_tree.sum_input_likelihoods(
+            self.indexes,
+            result,
+            likelihoods,
+        )
 
     # For root
 
@@ -195,37 +196,12 @@ class _PyLikelihoodTreeEdge(_LikelihoodTreeEdge):
         return numpy.log(sum(state_probs)) + exponent * self.LOG_BASE
 
     def get_total_log_likelihood(self, input_likelihoods, mprobs):
-        lhs = numpy.inner(input_likelihoods, mprobs)
+        lhs = likelihood_tree.inner_product(input_likelihoods, mprobs)
         return self.get_log_sum_across_sites(lhs)
 
     def get_log_sum_across_sites(self, lhs):
-        return numpy.inner(numpy.log(lhs), self.counts)
+        return likelihood_tree.get_log_sum_across_sites(lhs, self.counts)
 
-
-class _PyxLikelihoodTreeEdge(_LikelihoodTreeEdge):
-    integer_type = numerictypes(int)  # match checkArrayInt1D
-    float_type = numerictypes(float)  # match checkArrayDouble1D/2D
-
-    def sum_input_likelihoodsR(self, result, *likelihoods):
-        pyrex.sum_input_likelihoods(self.indexes, result, likelihoods)
-        return result
-
-    # For root
-
-    def log_dot_reduce(self, patch_probs, switch_probs, plhs):
-        return pyrex.log_dot_reduce(self.index, patch_probs, switch_probs, plhs)
-
-    def get_total_log_likelihood(self, input_likelihoods, mprobs):
-        return pyrex.get_total_log_likelihood(self.counts, input_likelihoods, mprobs)
-
-    def get_log_sum_across_sites(self, lhs):
-        return pyrex.get_log_sum_across_sites(self.counts, lhs)
-
-
-if pyrex is None:
-    LikelihoodTreeEdge = _PyLikelihoodTreeEdge
-else:
-    LikelihoodTreeEdge = _PyxLikelihoodTreeEdge
 
 FLOAT_TYPE = LikelihoodTreeEdge.float_type
 INTEGER_TYPE = LikelihoodTreeEdge.integer_type
@@ -298,7 +274,7 @@ class LikelihoodTreeLeaf(object):
 
     def backward(self):
         index = numpy.array(self.index[::-1, ...])
-        result = self.__class__(
+        return self.__class__(
             self.uniq,
             self.input_likelihoods,
             self.counts,
@@ -307,7 +283,6 @@ class LikelihoodTreeLeaf(object):
             self.alphabet,
             None,
         )
-        return result
 
     def __len__(self):
         return len(self.index)

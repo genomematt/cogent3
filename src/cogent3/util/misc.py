@@ -1,22 +1,32 @@
 #!/usr/bin/env python
 """Generally useful utility classes and methods.
 """
+import os
+import re
+import shutil
+import uuid
+import warnings
 import zipfile
 
 from bz2 import open as bzip_open
 from gzip import open as gzip_open
+from io import TextIOWrapper
 from os import path as os_path
 from os import remove
 from pathlib import Path
 from random import choice, randint
-from tempfile import NamedTemporaryFile, gettempdir
+from tempfile import mkdtemp
 from warnings import warn
+from zipfile import ZipFile
 
+import numpy
+
+from chardet import detect
 from numpy import array, ceil, finfo, float64, floor, log10, logical_not, sum
 
 
 __author__ = "Rob Knight"
-__copyright__ = "Copyright 2007-2020, The Cogent Project"
+__copyright__ = "Copyright 2007-2021, The Cogent Project"
 __credits__ = [
     "Rob Knight",
     "Peter Maxwell",
@@ -28,9 +38,9 @@ __credits__ = [
     "Marcin Cieslik",
 ]
 __license__ = "BSD-3"
-__version__ = "2020.2.7a"
-__maintainer__ = "Rob Knight"
-__email__ = "rob@spot.colorado.edu"
+__version__ = "2021.04.20a"
+__maintainer__ = "Gavin Huttley"
+__email__ = "Gavin.Huttley@anu.edu.au"
 __status__ = "Production"
 
 
@@ -55,9 +65,9 @@ def _adjusted_gt_minprob_vector(probs, minprob):
 
 def adjusted_gt_minprob(probs, minprob=1e-6):
     """returns numpy array of probs scaled such that minimum is > minval
-    
+
     result sums to 1 within machine precision
-    
+
     if 2D array, assumes row-order"""
     assert 0 <= minprob < 1, "invalid minval %s" % minprob
     probs = array(probs, dtype=float64)
@@ -75,7 +85,7 @@ def adjusted_gt_minprob(probs, minprob=1e-6):
 
 def adjusted_within_bounds(value, lower, upper, eps=1e-7, action="warn"):
     """returns value such that lower <= value <= upper
-    
+
     Parameters
     ----------
     value
@@ -125,147 +135,222 @@ def bytes_to_string(data):
     return data
 
 
+def open_zip(filename, mode="r", **kwargs):
+    """open a single member zip-compressed file
+
+    Note
+    ----
+    If mode="r". The function raises ValueError if zip has > 1 record.
+    The returned object is wrapped by TextIOWrapper with latin encoding
+    (so it's not a bytes string).
+
+    If mode="w", returns an atomic_write() instance.
+    """
+    binary_mode = "b" in mode
+    mode = mode[:1]
+
+    encoding = kwargs.pop("encoding") if "encoding" in kwargs else "latin-1"
+    if mode.startswith("w"):
+        return atomic_write(filename, mode=mode, in_zip=True)
+
+    mode = mode.strip("t")
+    with ZipFile(filename) as zf:
+        if len(zf.namelist()) != 1:
+            raise ValueError("Archive is supposed to have only one record.")
+
+        opened = zf.open(zf.namelist()[0], mode=mode, **kwargs)
+
+        if binary_mode:
+            return opened
+
+        return TextIOWrapper(opened, encoding=encoding)
+
+
 def open_(filename, mode="rt", **kwargs):
     """open that handles different compression"""
-    op = {"gz": gzip_open, "bz2": bzip_open}.get(filename.split(".")[-1], open)
-    return op(filename, mode, **kwargs)
+
+    filename = Path(filename).expanduser().absolute()
+    op = {".gz": gzip_open, ".bz2": bzip_open, ".zip": open_zip}.get(
+        filename.suffix, open
+    )
+
+    encoding = kwargs.pop("encoding", None)
+    need_encoding = mode.startswith("r") and "b" not in mode
+    if need_encoding:
+        if "encoding" not in kwargs:
+            with op(filename, mode="rb") as infile:
+                data = infile.read(100)
+
+            encoding = detect(data)
+            encoding = encoding["encoding"]
+
+    return op(filename, mode, encoding=encoding, **kwargs)
+
+
+def _path_relative_to_zip_parent(zip_path, member_path):
+    """returns member_path relative to zip_path
+
+    Parameters
+    ----------
+    zip_path: Path
+    member_path: Path
+
+    Notes
+    -----
+    with zip_path = "parentdir/named.zip", then member_path="named/member.tsv"
+    or path="member.tsv" will return "named/member.tsv"
+    """
+    zip_name = zip_path.name.replace(".zip", "")
+    if zip_name not in member_path.parts:
+        return Path(zip_name) / member_path
+
+    return Path(*member_path.parts[member_path.parts.index(zip_name) :])
 
 
 class atomic_write:
     """performs atomic write operations, cleans up if fails"""
 
-    def __init__(self, path, tmpdir=".", in_zip=None, mode="w"):
+    def __init__(self, path, tmpdir=None, in_zip=None, mode="w", encoding=None):
+        """
+
+        Parameters
+        ----------
+        path
+            path to file, or relative to directory specified by in_zip
+        tmpdir
+            directory where temporary file will be created
+        in_zip
+            path to the zip archive containing path,
+            e.g. if in_zip="path/to/data.zip", then path="data/seqs.tsv"
+            Decompressing the archive will produce the "data/seqs.tsv"
+        mode
+            file writing mode
+        encoding
+            text encoding
+        """
+        path = Path(path).expanduser()
+        in_zip = Path(in_zip) if isinstance(in_zip, str) else in_zip
+        _, cmp = get_format_suffixes(path)
+        if in_zip and cmp == "zip":
+            in_zip = path if isinstance(in_zip, bool) else in_zip
+            path = Path(str(path)[: str(path).rfind(".zip")])
+
+        if in_zip:
+            path = _path_relative_to_zip_parent(in_zip, path)
+
         self._path = path
+        self._cmp = cmp
         self._mode = mode
         self._file = None
+        self._encoding = encoding
         self._in_zip = in_zip
-        self._tmpdir = tmpdir
+        self._tmppath = self._make_tmppath(tmpdir)
+
         self.succeeded = None
         self._close_func = (
             self._close_rename_zip if in_zip else self._close_rename_standard
         )
 
-    def __enter__(self):
-        self._file = NamedTemporaryFile(self._mode, delete=False, dir=self._tmpdir)
+    def _make_tmppath(self, tmpdir):
+        """returns path of temporary file
+
+        Parameters
+        ----------
+        tmpdir: Path
+            to directory
+
+        Returns
+        -------
+        full path to a temporary file
+
+        Notes
+        -----
+        Uses a random uuid as the file name, adds suffixes from path
+        """
+        suffixes = (
+            "".join(self._path.suffixes)
+            if not self._in_zip
+            else "".join(self._path.suffixes[:-1])
+        )
+        parent = self._in_zip.parent if self._in_zip else self._path.parent
+        name = f"{uuid.uuid4()}{suffixes}"
+        tmpdir = Path(mkdtemp(dir=parent)) if tmpdir is None else Path(tmpdir)
+
+        if not tmpdir.exists():
+            raise FileNotFoundError(f"{tmpdir} directory does not exist")
+
+        tmp_path = tmpdir / name
+        return tmp_path
+
+    def _get_fileobj(self):
+        """returns file to be written to"""
+        if self._file is None:
+            self._file = open_(self._tmppath, self._mode, encoding=self._encoding)
+
         return self._file
 
-    def _close_rename_standard(self, p):
-        p.rename(self._path)
+    def __enter__(self):
+        return self._get_fileobj()
 
-    def _close_rename_zip(self, p):
+    def _close_rename_standard(self, src):
+        dest = Path(self._path)
+        try:
+            dest.unlink()
+        except FileNotFoundError:
+            pass
+        finally:
+            src.rename(dest)
+
+        shutil.rmtree(src.parent)
+
+    def _close_rename_zip(self, src):
         with zipfile.ZipFile(self._in_zip, "a") as out:
-            out.write(str(p), arcname=self._path)
+            out.write(str(src), arcname=self._path)
 
-        p.unlink()
+        shutil.rmtree(src.parent)
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self._file.close()
-        p = Path(self._file.name)
         if exc_type is None:
-            self._close_func(p)
+            self._close_func(self._tmppath)
             self.succeeded = True
         else:
             self.succeeded = False
-            p.unlink()
+            shutil.rmtree(self._tmppath.parent)
+
+    def write(self, text):
+        """writes text to file"""
+        fileobj = self._get_fileobj()
+        fileobj.write(text)
+
+    def close(self):
+        """closes file"""
+        self.__exit__(None, None, None)
+
+
+_wout_period = re.compile(r"^\.")
 
 
 def get_format_suffixes(filename):
-    """returns compression and/or file suffixes"""
-    if "." not in filename:
+    """returns file, compression suffixes"""
+    filename = Path(filename)
+    if not filename.suffix:
         return None, None
 
     compression_suffixes = ("bz2", "gz", "zip")
-    filename = filename.split(".")
-    suffixes = filename[1:] if len(filename) == 2 else filename[-2:]
+    suffixes = [_wout_period.sub("", sfx).lower() for sfx in filename.suffixes[-2:]]
     if suffixes[-1] in compression_suffixes:
-        cmp_suffix = suffixes.pop(-1)
+        cmp_suffix = suffixes[-1]
     else:
         cmp_suffix = None
 
-    if suffixes:
+    if len(suffixes) == 2 and cmp_suffix is not None:
+        suffix = suffixes[0]
+    elif cmp_suffix is None:
         suffix = suffixes[-1]
     else:
         suffix = None
     return suffix, cmp_suffix
-
-
-class FilePath(str):
-    """ Hold paths for proper handling
-
-        Paths in this sense are filenames, directory paths, or filepaths.
-        Some examples include:
-         file.txt
-         ./path/to/file.txt
-         ./path/to/dir/
-         /path/to/file.txt
-         .
-         /
-
-        The purpose of this class is to allow all paths to be handled the
-         same since they sometimes need to be treated differently than
-         simple strings. For example, if a path has a space in it, and it
-         is being passed to system, it needs to be wrapped in quotes. But,
-         you wouldn't want it as a string wrapped in quotes b/c, e.g.,
-         isabs('"/absolute/path"') == False, b/c the first char is a ", not
-         a /.
-
-        * This would make more sense to call Path, but that conflicts with
-            the ResultPath.Path attribute. I'm not sure what to do about this
-            and want to see what others think. Once finalized, a global
-            replace should take care of making the switch.
-
-    """
-
-    def __new__(cls, path):
-        try:
-            return str.__new__(cls, path.strip('"'))
-        except AttributeError:
-            return str.__new__(cls, "")
-
-    def __str__(self):
-        """ wrap self in quotes, or return the empty string if self == '' """
-        if self == "":
-            return ""
-        return "".join(['"', self, '"'])
-
-    def __add__(self, other):
-        return FilePath("".join([self, other]))
-
-
-def get_tmp_filename(
-    tmp_dir=gettempdir(), prefix="tmp", suffix=".txt", result_constructor=FilePath
-):
-    """ Generate a temporary filename and return as a FilePath object
-
-        tmp_dir: the directory to house the tmp_filename (default: '/tmp')
-        prefix: string to append to beginning of filename (default: 'tmp')
-            Note: It is very useful to have prefix be descriptive of the
-            process which is creating the temporary file. For example, if
-            your temp file will be used to build a temporary blast database,
-            you might pass prefix=TempBlastDB
-        suffix: the suffix to be appended to the temp filename (default '.txt')
-        result_constructor: the constructor used to build the result filename
-            (default: cogent3.app.parameters.FilePath). Note that joining
-            FilePath objects with one another or with strings, you must use
-            the + operator. If this causes trouble, you can pass str as the
-            the result_constructor.
-    """
-    # check not none
-    if not tmp_dir:
-        tmp_dir = ""
-    # if not current directory, append "/" if not already on path
-    elif not tmp_dir.endswith("/"):
-        tmp_dir += "/"
-
-    chars = "abcdefghigklmnopqrstuvwxyz"
-    picks = chars + chars.upper() + "0123456790"
-    return (
-        result_constructor(tmp_dir)
-        + result_constructor(prefix)
-        + result_constructor(
-            "%s%s" % ("".join([choice(picks) for i in range(20)]), suffix)
-        )
-    )
 
 
 def iterable(item):
@@ -967,8 +1052,7 @@ def NestedSplitter(
 
 
 def remove_files(list_of_filepaths, error_on_missing=True):
-    """Remove list of filepaths, optionally raising an error if any are missing
-    """
+    """Remove list of filepaths, optionally raising an error if any are missing"""
     missing = []
     for fp in list_of_filepaths:
         try:
@@ -1097,9 +1181,13 @@ def get_object_provenance(obj):
     # algorithm inspired by Greg Baacon's answer to
     # https://stackoverflow.com/questions/2020014/get-fully-qualified-class
     # -name-of-an-object-in-python
-    mod = obj.__class__.__module__
-    name = obj.__class__.__name__
-    result = None
+    if isinstance(obj, type):
+        mod = obj.__module__
+        name = obj.__name__
+    else:
+        mod = obj.__class__.__module__
+        name = obj.__class__.__name__
+
     if mod is None or mod == "builtins":
         result = name
     else:
@@ -1137,3 +1225,50 @@ def extend_docstring_from(source, pre=False):
         return dest
 
     return docstring_inheriting_decorator
+
+
+def ascontiguousarray(source_array, dtype=None):
+    if source_array is not None:
+        return numpy.ascontiguousarray(source_array, dtype=dtype)
+    return source_array
+
+
+def get_setting_from_environ(environ_var, params_types):
+    """extract settings from environment variable
+
+    Parameters
+    ----------
+    environ_var : str
+        name of an environment variable
+    params_types : dict
+        {param name: type}, values will be cast to type
+
+    Returns
+    -------
+    dict
+
+    Notes
+    -----
+    settings must of form 'param_name1=param_val,param_name2=param_val2'
+    """
+    var = os.environ.get(environ_var, None)
+    if var is None:
+        return {}
+
+    var = var.split(",")
+    result = {}
+    for item in var:
+        item = item.split("=")
+        if len(item) != 2 or item[0] not in params_types:
+            continue
+
+        name, val = item
+        try:
+            val = params_types[name](val)
+            result[name] = val
+        except Exception:
+            warnings.warn(
+                f"could not cast {name}={val} to type {params_types[name]}, skipping"
+            )
+
+    return result

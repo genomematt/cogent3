@@ -22,12 +22,12 @@ from cogent3.parse.record import RecordError
 
 
 __author__ = "Rob Knight"
-__copyright__ = "Copyright 2007-2020, The Cogent Project"
+__copyright__ = "Copyright 2007-2021, The Cogent Project"
 __credits__ = ["Rob Knight"]
 __license__ = "BSD-3"
-__version__ = "2020.2.7a"
-__maintainer__ = "Rob Knight"
-__email__ = "rob@spot.colorado.edu"
+__version__ = "2021.04.20a"
+__maintainer__ = "Gavin Huttley"
+__email__ = "Gavin.Huttley@anu.edu.au"
 __status__ = "Production"
 
 base_path = os.path.dirname(os.path.dirname(__file__))
@@ -89,10 +89,10 @@ class MinimalFastaParserTests(GenericFastaTest):
     def test_gt_bracket_in_seq(self):
         """MinimalFastaParser handles alternate finder function
 
-            this test also illustrates how to use the MinimalFastaParser
-            to handle "sequences" that start with a > symbol, which can
-            happen when we abuse the MinimalFastaParser to parse
-            fasta-like sequence quality files.
+        this test also illustrates how to use the MinimalFastaParser
+        to handle "sequences" that start with a > symbol, which can
+        happen when we abuse the MinimalFastaParser to parse
+        fasta-like sequence quality files.
         """
         oneseq_w_gt = ">abc\n>CAG\n".split("\n")
 
@@ -454,7 +454,7 @@ class GroupFastaParsingTest(TestCase):
             got = group.to_dict()
             want = expected[count]
             self.assertEqual(got, want)
-            self.assertEqual(group.info.Group, "group%s" % (count + 1))
+            self.assertEqual(group.info.Group, f"group{count + 1}")
             count += 1
 
         # check we don't return a done group

@@ -10,6 +10,7 @@ import zipfile
 from collections import defaultdict
 from fnmatch import fnmatch, translate
 from io import TextIOWrapper
+from json import JSONDecodeError
 from pathlib import Path
 from pprint import pprint
 from warnings import warn
@@ -26,15 +27,16 @@ from cogent3.util.misc import (
     get_format_suffixes,
     open_,
 )
+from cogent3.util.parallel import is_master_process
 from cogent3.util.table import Table
 from cogent3.util.union_dict import UnionDict
 
 
 __author__ = "Gavin Huttley"
-__copyright__ = "Copyright 2007-2020, The Cogent Project"
+__copyright__ = "Copyright 2007-2021, The Cogent Project"
 __credits__ = ["Gavin Huttley"]
 __license__ = "BSD-3"
-__version__ = "2020.2.7a"
+__version__ = "2021.04.20a"
 __maintainer__ = "Gavin Huttley"
 __email__ = "Gavin.Huttley@anu.edu.au"
 __status__ = "Alpha"
@@ -55,15 +57,21 @@ def make_record_for_json(identifier, data, completed):
         pass
 
     data = json.dumps(data)
-    record = dict(identifier=identifier, data=data, completed=completed)
-    return record
+    return dict(identifier=identifier, data=data, completed=completed)
 
 
 def load_record_from_json(data):
     """returns identifier, data, completed status from json string"""
     if type(data) == str:
         data = json.loads(data)
-    value = json.loads(data["data"])
+
+    value = data["data"]
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except JSONDecodeError:
+            pass
+
     return data["identifier"], value, data["completed"]
 
 
@@ -99,7 +107,6 @@ class DataStoreMember(str):
 
 
 class ReadOnlyDataStoreBase:
-    """a read only data store"""
 
     store_suffix = None
 
@@ -126,6 +133,7 @@ class ReadOnlyDataStoreBase:
         d = locals()
         self._persistent = UnionDict({k: v for k, v in d.items() if k != "self"})
 
+        source = str(source)
         suffix = suffix or ""
         if suffix != "*":  # wild card search for all
             suffix = re.sub(r"^[\s.*]+", "", suffix)  # tidy the suffix
@@ -143,8 +151,7 @@ class ReadOnlyDataStoreBase:
         self._checksums = {}
 
     def __getstate__(self):
-        data = self._persistent.copy()
-        return data
+        return self._persistent.copy()
 
     def __setstate__(self, data):
         new = self.__class__(**data)
@@ -160,8 +167,7 @@ class ReadOnlyDataStoreBase:
 
         num = len(self)
         name = self.__class__.__name__
-        txt = f"{num}x member {name}(source='{self.source}', members={sample})"
-        return txt
+        return f"{num}x member {name}(source='{self.source}', members={sample})"
 
     def __str__(self):
         return str(list(self))
@@ -218,8 +224,7 @@ class ReadOnlyDataStoreBase:
         return None
 
     def get_relative_identifier(self, identifier):
-        """returns the identifier relative to store root path
-        """
+        """returns the identifier relative to store root path"""
         if isinstance(identifier, DataStoreMember) and identifier.parent is self:
             return identifier
 
@@ -239,8 +244,7 @@ class ReadOnlyDataStoreBase:
         return identifier
 
     def get_absolute_identifier(self, identifier, from_relative=False):
-        """returns the identifier relative to the root path
-        """
+        """returns the identifier relative to the root path"""
         if not from_relative:
             identifier = self.get_relative_identifier(identifier)
         source = self.source.replace(".zip", "")
@@ -322,8 +326,7 @@ class ReadOnlyDirectoryDataStore(ReadOnlyDataStoreBase):
         if not os.path.exists(identifier):
             raise ValueError(f"path '{identifier}' does not exist")
 
-        infile = open_(identifier)
-        return infile
+        return open_(identifier)
 
 
 class SingleReadDataStore(ReadOnlyDirectoryDataStore):
@@ -339,7 +342,7 @@ class SingleReadDataStore(ReadOnlyDirectoryDataStore):
         kwargs
             ignored
         """
-        path = Path(source)
+        path = Path(source).expanduser()
         assert path.exists() and path.is_file()
         super(SingleReadDataStore, self).__init__(
             str(path.parent), suffix=str(path.suffix)
@@ -383,13 +386,13 @@ class ReadOnlyZippedDataStore(ReadOnlyDataStoreBase):
 
 
 class WritableDataStoreBase:
+    """a writeable data store"""
+
     def __init__(self, if_exists=RAISE, create=False):
         """
-        Parameters
-        ----------
         if_exists : str
              behaviour when the destination already exists. Valid constants are
-             defined in this file as OVERWRITE, SKIP, RAISE, IGNORE (they
+             defined in this file as OVERWRITE, RAISE, IGNORE (they
              correspond to lower case version of the same word)
         create : bool
             if True, the destination is created
@@ -404,26 +407,21 @@ class WritableDataStoreBase:
         self._members = []
         if_exists = if_exists.lower()
         assert if_exists in (OVERWRITE, SKIP, RAISE, IGNORE)
-        if create is False and if_exists == OVERWRITE:
-            warn(f"'{OVERWRITE}' reset to '{IGNORE}' and create=True", UserWarning)
-            create = True
         self._source_create_delete(if_exists, create)
 
     def make_relative_identifier(self, data):
         """returns identifier for a new member relative to source"""
+        from cogent3.app.composable import _get_source
+
         if isinstance(data, DataStoreMember):
             data = data.name
         elif type(data) != str:
-            try:
-                data = data.info.source
-            except AttributeError:
-                try:
-                    data = data.source
-                except AttributeError:
-                    raise ValueError(
-                        "objects for storage require either a "
-                        "source or info.source string attribute"
-                    )
+            data = _get_source(data)
+            if data is None:
+                raise ValueError(
+                    "objects for storage require either a "
+                    "source or info.source string attribute"
+                )
         basename = os.path.basename(data)
         suffix, comp = get_format_suffixes(basename)
         if suffix and comp:
@@ -442,8 +440,7 @@ class WritableDataStoreBase:
     def make_absolute_identifier(self, data):
         """returns a absolute identifier for a new member, includes source"""
         basename = self.make_relative_identifier(data)
-        identifier = self.get_absolute_identifier(basename, from_relative=True)
-        return identifier
+        return self.get_absolute_identifier(basename, from_relative=True)
 
     def add_file(self, path, make_unique=True, keep_suffix=True, cleanup=False):
         """
@@ -530,6 +527,8 @@ class WritableDataStoreBase:
 
 
 class WritableDirectoryDataStore(ReadOnlyDirectoryDataStore, WritableDataStoreBase):
+    @extend_docstring_from(ReadOnlyDirectoryDataStore.__init__, pre=False)
+    @extend_docstring_from(WritableDataStoreBase.__init__, pre=False)
     def __init__(
         self,
         source,
@@ -541,22 +540,10 @@ class WritableDirectoryDataStore(ReadOnlyDirectoryDataStore, WritableDataStoreBa
         **kwargs,
     ):
         """
-        Parameters
-        ----------
-        source
-            path to directory / zip file
-        suffix
-            only members whose name matches the suffix are considered included
-        mode : str
-            file opening mode, defaults to write
-        if_exists : str
-             behaviour when the destination already exists. Valid constants are
-             defined in this file as OVERWRITE, SKIP, RAISE, IGNORE (they
-             correspond to lower case version of the same word)
-        create : bool
-            if True, the destination is created
         md5 : bool
             record md5 hexadecimal checksum of data when possible
+        mode : str
+            file opening mode, defaults to write
         """
         assert "w" in mode or "a" in mode
         ReadOnlyDirectoryDataStore.__init__(self, source=source, suffix=suffix, md5=md5)
@@ -568,17 +555,20 @@ class WritableDirectoryDataStore(ReadOnlyDirectoryDataStore, WritableDataStoreBa
 
     def _has_other_suffixes(self, path, suffix):
         p = Path(path)
-        allowed = {str(suffix), "log"}
+        allowed = {str(suffix).lower(), "log"}
         for f in p.iterdir():
             if get_format_suffixes(str(f))[0] not in allowed:
                 return True
         return False
 
     def _source_create_delete(self, if_exists, create):
-        exists = os.path.exists(self.source)
-        if exists and if_exists == RAISE:
-            raise RuntimeError(f"'{self.source}' exists")
-        elif exists and if_exists == OVERWRITE:
+        if not is_master_process():
+            return
+
+        path = Path(self.source)
+        if path.exists() and if_exists == RAISE:
+            raise FileExistsError(f"'{self.source}' exists")
+        elif path.exists() and if_exists == OVERWRITE:
             if self._has_other_suffixes(self.source, self.suffix):
                 raise RuntimeError(
                     f"Unsafe to delete {self.source} as it contains ",
@@ -589,11 +579,11 @@ class WritableDirectoryDataStore(ReadOnlyDirectoryDataStore, WritableDataStoreBa
                 shutil.rmtree(self.source)
             except NotADirectoryError:
                 os.remove(self.source)
-        elif not exists and not create:
-            raise RuntimeError(f"'{self.source}' does not exist")
+        elif not path.exists() and not create:
+            raise FileNotFoundError(f"'{self.source}' does not exist")
 
         if create:
-            os.makedirs(self.source, exist_ok=True)
+            path.mkdir(parents=True, exist_ok=True)
 
     @extend_docstring_from(WritableDataStoreBase.write)
     def write(self, identifier, data):
@@ -642,6 +632,15 @@ class WritableZippedDataStore(ReadOnlyZippedDataStore, WritableDataStoreBase):
         md5 : bool
             record md5 hexadecimal checksum of data when possible
         """
+        from cogent3.util.warning import discontinued
+
+        discontinued(
+            "class",
+            self.__class__.__name__,
+            "2021.10.01",
+            reason="zips are not efficient for incremental inclusion of files, use a tinydb instead",
+        )
+
         ReadOnlyZippedDataStore.__init__(self, source=source, suffix=suffix, md5=md5)
         WritableDataStoreBase.__init__(self, if_exists=if_exists, create=create)
 
@@ -657,10 +656,12 @@ class WritableZippedDataStore(ReadOnlyZippedDataStore, WritableDataStoreBase):
         return False
 
     def _source_create_delete(self, if_exists, create):
+        if not is_master_process():
+            return
         exists = os.path.exists(self.source)
         dirname = os.path.dirname(self.source)
         if exists and if_exists == RAISE:
-            raise RuntimeError(f"'{self.source}' exists")
+            raise FileExistsError(f"'{self.source}' exists")
         elif exists and if_exists == OVERWRITE:
             if self._has_other_suffixes(self.source, self.suffix):
                 raise RuntimeError(
@@ -670,7 +671,7 @@ class WritableZippedDataStore(ReadOnlyZippedDataStore, WritableDataStoreBase):
                 )
             os.remove(self.source)
         elif dirname and not os.path.exists(dirname) and not create:
-            raise RuntimeError(f"'{dirname}' does not exist")
+            raise FileExistsError(f"'{dirname}' does not exist")
 
         if create and dirname:
             os.makedirs(dirname, exist_ok=True)
@@ -697,11 +698,12 @@ def _db_lockid(path):
     """returns value for pid in LOCK record or None"""
     if not os.path.exists(path):
         return None
-    db = TinyDB(path)
-    query = Query().identifier.matches("LOCK")
-    got = db.get(query)
-    lockid = None if not got else got["pid"]
-    db.close()
+
+    with TinyDB(path) as db:
+        query = Query().identifier.matches("LOCK")
+        got = db.get(query)
+        lockid = None if not got else got["pid"]
+
     return lockid
 
 
@@ -710,6 +712,7 @@ class ReadOnlyTinyDbDataStore(ReadOnlyDataStoreBase):
 
     store_suffix = "tinydb"
 
+    @extend_docstring_from(ReadOnlyDirectoryDataStore.__init__)
     def __init__(self, *args, **kwargs):
         kwargs["suffix"] = "json"
         super(ReadOnlyTinyDbDataStore, self).__init__(*args, **kwargs)
@@ -773,8 +776,7 @@ class ReadOnlyTinyDbDataStore(ReadOnlyDataStoreBase):
         self._finish.detach()
 
     def lock(self):
-        """if writable, and not locked, locks the database to this pid
-        """
+        """if writable, and not locked, locks the database to this pid"""
         if not self.locked:
             self._db.insert(dict(identifier="LOCK", pid=os.getpid()))
             self._db.storage.flush()
@@ -841,8 +843,7 @@ class ReadOnlyTinyDbDataStore(ReadOnlyDataStoreBase):
             ]
             rows.append(row)
 
-        table = Table(header=header, rows=rows, title="incomplete records")
-        return table
+        return Table(header=header, data=rows, title="incomplete records")
 
     @property
     def members(self):
@@ -926,8 +927,18 @@ class ReadOnlyTinyDbDataStore(ReadOnlyDataStoreBase):
             data = record.read().splitlines()
             first = data.pop(0).split("\t")
             row = [first[0], record.name]
-            data = [r.split("\t")[-1].split(" : ", maxsplit=1) for r in data]
-            data = dict(data)
+            key = None
+            mapped = {}
+            for line in data:
+                line = line.split("\t")[-1].split(" : ", maxsplit=1)
+                if len(line) == 1:
+                    mapped[key] += line[0]
+                    continue
+
+                key = line[0]
+                mapped[key] = line[1]
+
+            data = mapped
             row.extend(
                 [
                     data["python"],
@@ -937,12 +948,11 @@ class ReadOnlyTinyDbDataStore(ReadOnlyDataStoreBase):
                 ]
             )
             rows.append(row)
-        table = Table(
+        return Table(
             header=["time", "name", "python version", "who", "command", "composable"],
-            rows=rows,
+            data=rows,
             title="summary of log files",
         )
-        return table
 
     @property
     def describe(self):
@@ -957,44 +967,64 @@ class ReadOnlyTinyDbDataStore(ReadOnlyDataStoreBase):
         num_incomplete = len(self.incomplete)
         num_complete = len(self.members)
         num_logs = len(self.logs)
-        summary = Table(
+        return Table(
             header=["record type", "number"],
-            rows=[
+            data=[
                 ["completed", num_complete],
                 ["incomplete", num_incomplete],
                 ["logs", num_logs],
             ],
             title=title,
         )
-        return summary
 
 
 class WritableTinyDbDataStore(ReadOnlyTinyDbDataStore, WritableDataStoreBase):
+    @extend_docstring_from(WritableDirectoryDataStore.__init__)
     def __init__(self, *args, **kwargs):
+        """
+
+        Notes
+        -----
+        A TinyDb file can be locked. In which case, ``if_exists=OVERWRITE``
+        will be converted to RAISE.
+        """
         if_exists = kwargs.pop("if_exists", RAISE)
-        create = kwargs.pop("create", None)
+        create = kwargs.pop("create", True)
         ReadOnlyTinyDbDataStore.__init__(self, *args, **kwargs)
         WritableDataStoreBase.__init__(self, if_exists=if_exists, create=create)
 
     def _source_create_delete(self, if_exists, create):
-        if _db_lockid(self.source):
+        if not is_master_process():
             return
 
-        exists = os.path.exists(self.source)
-        dirname = os.path.dirname(self.source)
-        if exists and if_exists == RAISE:
-            raise RuntimeError(f"'{self.source}' exists")
-        elif exists and if_exists == OVERWRITE:
+        path = Path(self.source)
+        if if_exists == OVERWRITE and path.exists():
             try:
-                os.remove(self.source)
+                path.unlink()
             except PermissionError:
                 # probably user accidentally created a directory
-                shutil.rmtree(self.source)
-        elif dirname and not os.path.exists(dirname) and not create:
-            raise RuntimeError(f"'{dirname}' does not exist")
+                shutil.rmtree(path)
+            return
 
-        if create and dirname:
-            os.makedirs(dirname, exist_ok=True)
+        locked_id = _db_lockid(self.source)
+        pid = os.getpid()
+        if path.exists() and if_exists == RAISE:
+            msg = f"'{path}' exists"
+            if locked_id is not None:
+                msg = (
+                    f"{msg}, and is locked by process pid {locked_id}."
+                    f" Current pid is {pid}"
+                )
+            raise FileExistsError(msg)
+
+        if if_exists == IGNORE and locked_id is not None:
+            warn(f"'{self.source}' is locked to {locked_id}, current pid is {pid}.")
+            return
+
+        if path.parent and not path.parent.exists() and not create:
+            raise FileNotFoundError(f"'{path.parent}' does not exist, set create=True")
+
+        path.parent.mkdir(parents=True, exist_ok=True)
 
     @extend_docstring_from(WritableDataStoreBase.write)
     def write(self, identifier, data):
@@ -1024,9 +1054,7 @@ class WritableTinyDbDataStore(ReadOnlyTinyDbDataStore, WritableDataStoreBase):
         record = make_record_for_json(relative_id, not_completed, False)
         doc_id = self.db.insert(record)
 
-        member = DataStoreMember(relative_id, self, id=doc_id)
-
-        return member
+        return DataStoreMember(relative_id, self, id=doc_id)
 
     def add_file(self, path, make_unique=True, keep_suffix=True, cleanup=False):
         """

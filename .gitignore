@@ -17,14 +17,16 @@ develop-eggs
 .installed.cfg
 lib
 lib64
+doc/draw
 
 # Installer logs
 pip-log.txt
 
 # Unit test / coverage reports
-.coverage
+.coverage*
 .tox
 coverage.xml
+junit-*.xml
 nosetests.xml
 tests/draw_results
 
@@ -37,6 +39,9 @@ tests/draw_results
 .pydevproject
 .idea/*
 .DS_Store
+__pycache__
+*.code-workspace
+*.wpu
 
 # vi
 .*.swp

@@ -2,31 +2,20 @@ import numpy
 
 from numpy import array, digitize
 from numpy.random import random
-from numpy.testing import assert_allclose
 
-from cogent3.maths.util import safe_log, safe_p_log_p
+from cogent3.maths.util import safe_log, safe_p_log_p, validate_freqs_array
 from cogent3.util.dict_array import DictArray, DictArrayTemplate
 from cogent3.util.misc import extend_docstring_from
 
 
 __author__ = "Gavin Huttley"
-__copyright__ = "Copyright 2007-2020, The Cogent Project"
+__copyright__ = "Copyright 2007-2021, The Cogent Project"
 __credits__ = ["Gavin Huttley"]
 __license__ = "BSD-3"
-__version__ = "2020.2.7a"
+__version__ = "2021.04.20a"
 __maintainer__ = "Gavin Huttley"
 __email__ = "Gavin.Huttley@anu.edu.au"
 __status__ = "Production"
-
-
-def validate_freqs_array(data, axis=None):
-    if (data < 0).any():
-        raise ValueError("negative frequency not allowed")
-
-    # we explicitly ignore nan
-    result = data.sum(axis=axis)
-    if not numpy.allclose(result[numpy.isnan(result) == False], 1):
-        raise ValueError("invalid frequencies, sum(axis=1) is not equal to 1")
 
 
 class _MotifNumberArray(DictArray):
@@ -41,11 +30,7 @@ class _MotifNumberArray(DictArray):
         # todo validate that motifs are strings and row_indices are ints or
         # strings
         # todo change row_indices argument name to row_keys
-        if isinstance(data, numpy.ndarray):
-            some_data = data.any()
-        else:
-            some_data = any(data)
-
+        some_data = data.any() if isinstance(data, numpy.ndarray) else any(data)
         if not some_data or len(data) == 0:
             raise ValueError("Must provide data")
 
@@ -158,10 +143,27 @@ class _MotifNumberArray(DictArray):
 
         return self.__class__(result, motifs=motifs, row_indices=row_order)
 
+    def _pairwise_stat(self, func):
+        """returns self dict of pairwise measurements between arrays"""
+        if len(self.shape) <= 1 or self.shape[0] <= 1:
+            return None
+
+        from itertools import combinations
+
+        data = {k: v.array for k, v in self.items()}
+        keys = list(data)
+        stats = {}
+        for k1, k2 in combinations(range(len(keys)), 2):
+            name1, name2 = keys[k1], keys[k2]
+            stats[(name1, name2)] = func(data[name1], data[name2])
+            stats[(name2, name1)] = stats[(name1, name2)]
+
+        return stats
+
 
 def _get_ordered_motifs_from_tabular(data, index=1):
     """backend motif extraction function for motif_counts, motif_freqs and pssm
-       assumed index 1 are motif strings; motif returned in order of occurrence"""
+    assumed index 1 are motif strings; motif returned in order of occurrence"""
 
     chars = []
     for entry in data:
@@ -188,7 +190,7 @@ def make_motif_counts_from_tabular(tab_data):
     ----------
     tab_data : numpy array
        tab_data is numpy array, with tab_data.shape must be (n, 3)
-   """
+    """
     motif = _get_ordered_motifs_from_tabular(tab_data)
     data = _get_data_from_tabular(tab_data, motif, "int")
     return MotifCountsArray(data, motif)
@@ -280,10 +282,10 @@ class MotifFreqsArray(_MotifNumberArray):
 
     def entropy_terms(self):
         """Returns
-           -------
-           entropies : array
-                Has same dimension as self.array with
-                safe log operation applied.
+        -------
+        entropies : array
+             Has same dimension as self.array with
+             safe log operation applied.
         """
         entropies = safe_p_log_p(self.array)
         return self.template.wrap(entropies)
@@ -375,8 +377,8 @@ class MotifFreqsArray(_MotifNumberArray):
         self, height=400, width=800, wrap=None, ylim=None, vspace=0.05, colours=None
     ):
         """returns a sequence logo Drawable"""
-        from cogent3.draw.logo import get_mi_char_heights, get_logo
         from cogent3.draw.drawable import get_domain
+        from cogent3.draw.logo import get_logo, get_mi_char_heights
 
         assert 0 <= vspace <= 1, f"{vspace} not in range 0-1"
         if ylim is None:
@@ -443,6 +445,18 @@ class MotifFreqsArray(_MotifNumberArray):
             axnum += 1
 
         return logo
+
+    def pairwise_jsm(self) -> dict:
+        """pairwise Jensen-Shannon metric"""
+        from cogent3.maths.measure import jsm
+
+        return self._pairwise_stat(jsm)
+
+    def pairwise_jsd(self) -> dict:
+        """pairwise Jensen-Shannon divergence"""
+        from cogent3.maths.measure import jsd
+
+        return self._pairwise_stat(jsd)
 
 
 class PSSM(_MotifNumberArray):

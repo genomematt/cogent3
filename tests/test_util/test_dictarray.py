@@ -1,3 +1,4 @@
+import json
 import os
 
 from tempfile import TemporaryDirectory
@@ -21,10 +22,10 @@ from cogent3.util.dict_array import (
 
 
 __author__ = "Gavin Huttley"
-__copyright__ = "Copyright 2007-2020, The Cogent Project"
+__copyright__ = "Copyright 2007-2021, The Cogent Project"
 __credits__ = ["Gavin Huttley"]
 __license__ = "BSD-3"
-__version__ = "2020.2.7a"
+__version__ = "2021.04.20a"
 __maintainer__ = "Gavin Huttley"
 __email__ = "Gavin.Huttley@anu.edu.au"
 __status__ = "Alpha"
@@ -91,7 +92,8 @@ class DictArrayTest(TestCase):
         """convert_1D_dict produces valid template input"""
         data = dict(a=0, b=35, c=45)
         vals, keys = convert_1D_dict(data)
-        b = DictArrayTemplate(keys).wrap(vals)
+        b = DictArrayTemplate(keys)
+        b = b.wrap(vals)
         self.assertEqual(b.array.tolist(), [0, 35, 45])
 
     def test_construct_both_dim_str(self):
@@ -115,6 +117,23 @@ class DictArrayTest(TestCase):
         self.assertEqual(b.keys(), [0, 1, 2])
         self.assertEqual(b[0].keys(), [0, 1, 2])
         self.assertEqual(sum(b[0]), 1)
+
+    def test_str_labels(self):
+        """DictArray with str labels or numpy U dtype"""
+        b = DictArrayTemplate(["Ab", "Bb", "Cb"], ["Db", "Eb", "Fb"]).wrap(self.a)
+        self.assertEqual(b.keys(), ["Ab", "Bb", "Cb"])
+        self.assertEqual(b[0].keys(), ["Db", "Eb", "Fb"])
+        self.assertEqual(b["Ab", "Eb"], 0)
+        self.assertEqual(b["Bb", "Eb"], 1)
+
+        b = DictArrayTemplate(
+            numpy.array(["Ab", "Bb", "Cb"], dtype="U"),
+            numpy.array(["Db", "Eb", "Fb"], dtype="U"),
+        ).wrap(self.a)
+        self.assertEqual(b.keys(), ["Ab", "Bb", "Cb"])
+        self.assertEqual(b[0].keys(), ["Db", "Eb", "Fb"])
+        self.assertEqual(b["Ab", "Eb"], 0)
+        self.assertEqual(b["Bb", "Eb"], 1)
 
     def test_with_mixed_label_types(self):
         """DictArray constructed with mixed label types."""
@@ -213,6 +232,48 @@ class DictArrayTest(TestCase):
         c = DictArrayTemplate("de", "DE").wrap([[b, b], [b, b]])
         self.assertTrue(isinstance(c.to_dict()["d"], dict))
 
+    def test_to_dict_values(self):
+        """values from to_dict should be python types"""
+        keys = "a", "b", "c", "d"
+        for data, _type in [
+            ([0, 35, 45, 3], int),
+            (["abc", "def", "jkl;", "aa"], str),
+            ([0.1, 0.2, 0.3, 0.4], float),
+        ]:
+            darr = DictArrayTemplate(keys).wrap(data)
+            got = {type(v) for v in darr.to_dict().values()}
+            self.assertEqual(got, {_type})
+
+        for data, _type in [
+            ([0, 35, 45, 3], int),
+            (["abc", "def", "jkl;", "aa"], str),
+            ([0.1, 0.2, 0.3, 0.4], float),
+        ]:
+            darr = DictArrayTemplate(keys[:2], keys[2:]).wrap([data[:2], data[2:]])
+            got = {type(v) for d in darr.to_dict().values() for v in d.values()}
+            self.assertEqual(got, {_type})
+
+    def test_to_dict_json(self):
+        """should be able to json.dumps result of to_dict"""
+        keys = "a", "b", "c", "d"
+        for data in [
+            [0, 35, 45, 3],
+            ["abc", "def", "jkl;", "aa"],
+            [0.1, 0.2, 0.3, 0.4],
+        ]:
+            darr = DictArrayTemplate(keys).wrap(data)
+            got = json.dumps(darr.to_dict())
+            self.assertIsInstance(got, str)
+
+        for data in [
+            [0, 35, 45, 3],
+            ["abc", "def", "jkl;", "aa"],
+            [0.1, 0.2, 0.3, 0.4],
+        ]:
+            darr = DictArrayTemplate(keys[:2], keys[2:]).wrap([data[:2], data[2:]])
+            got = json.dumps(darr.to_dict())
+            self.assertIsInstance(got, str)
+
     def test_to_dict_roundtrip(self):
         """roundtrip of DictArray.to_dict() should produce same order."""
         d1 = dict(a=dict(k=1, l=2, m=3), b=dict(k=4, l=5, m=6))
@@ -233,7 +294,7 @@ class DictArrayTest(TestCase):
         # the wrap method creates a new array
         self.assertIsNot(got.array, b.array)
 
-    def test_convert_for_dictarray(self):
+    def test_convert_for_dictarray2(self):
         """convert_for_dictarray correctly delegates"""
         b = DictArrayTemplate("abc", "ABC").wrap(self.a)
         data_types = (
@@ -309,6 +370,18 @@ class DictArrayTest(TestCase):
         self.assertIsInstance(got, str)
         self.assertTrue(len(got), 100)
 
+        # case where 1D array
+        a = [4, 6, 4, 2]
+        darr = DictArrayTemplate(["A", "C", "G", "T"]).wrap(a)
+        got = darr._repr_html_()
+        self.assertTrue('class="index"' not in got)
+
+        # case of 3D array
+        d3 = numpy.arange(8).reshape((2, 2, 2))
+        darr = DictArrayTemplate(2, 2, 2).wrap(d3)
+        got = darr._repr_html_()
+        self.assertIn("3 dimensional", got)
+
     def test_write(self):
         """exercising write method"""
         data = [[3, 7], [2, 8], [5, 5]]
@@ -339,6 +412,100 @@ class DictArrayTest(TestCase):
             darr.to_string(sep=" "),
             "dim-1 dim-2 value\n0 0 3.123456789\n0 1 6.246913578\n1 0 9.370370367\n1 1 12.493827156",
         )
+        with self.assertRaises(ValueError):
+            darr.to_string(format="md"),
+
+    def test_to_table(self):
+        """creates Table when ndim <= 2"""
+        from cogent3.util.table import Table
+
+        a1D = DictArrayTemplate(["a", "b"]).wrap([0, 1])
+        t = a1D.to_table()
+        self.assertIsInstance(t, Table)
+        # 1D tables don't get an index_name column
+        self.assertEqual(t.index_name, None)
+        a2D = DictArrayTemplate(["a", "b"], ["c", "d"]).wrap(
+            numpy.array([0, 1, 2, 3]).reshape((2, 2))
+        )
+        t = a2D.to_table()
+        self.assertIsInstance(t, Table)
+        self.assertEqual(t.shape, (2, 3))  # because index_name column added
+        # make sure the 2D variant has an index_name column, name is empty string
+        self.assertEqual(t.index_name, "")
+        self.assertEqual(t.columns[""].tolist(), a2D.template.names[0])
+        # which works
+        self.assertEqual(t["b", "d"], 3)
+
+        a3D = DictArrayTemplate(["a", "b"], ["c", "d"], ["e", "f"]).wrap(
+            numpy.array([0, 1, 2, 3, 4, 5, 6, 7]).reshape((2, 2, 2))
+        )
+        with self.assertRaises(ValueError):
+            _ = a3D.to_table()
+
+    def test_interpret_index(self):
+        """correctly handles just explicitly defined indices"""
+        n = ["ab", "dna", "rna"]
+        a1D = DictArrayTemplate(n)
+        got = a1D.interpret_index(["ab", "rna"])
+        self.assertEqual(got[0], ([0, 2],))
+        got = a1D.interpret_index([0, 2])
+        self.assertEqual(got[0], ([0, 2],))
+
+    def test_slicing_combos(self):
+        """different mixtures of slicing should work"""
+        darr = DictArrayTemplate(list(DNA), list(DNA)).wrap(
+            [
+                [0.7, 0.1, 0.2, 0.3],
+                [0.1, 0.7, 0.1, 0.3],
+                [0.3, 0.2, 0.6, 0.3],
+                [0.4, 0.1, 0.1, 0.7],
+            ]
+        )
+        got = darr["C":"G", "C":"G"]
+        assert_allclose(got.array, numpy.array([[0.7, 0.1], [0.2, 0.6]]))
+
+        got = darr[[1, 2], [1, 2]]
+        assert_allclose(got.array, numpy.array([[0.7, 0.1], [0.2, 0.6]]))
+
+        got = darr[[2, 3], "C"]
+        assert_allclose(got.array, numpy.array([0.2, 0.1]))
+        got = darr["C", [2, 3]]
+        assert_allclose(got.array, numpy.array([0.1, 0.3]))
+
+        got = darr[[1, 2], "T":"A"]
+        assert_allclose(got.array, numpy.array([[0.1, 0.7], [0.3, 0.2]]))
+
+        got = darr["T":"A", [1, 2]]
+        assert_allclose(got.array, numpy.array([[0.1, 0.2], [0.7, 0.1]]))
+
+        # make sure we cope with keys that are int's
+        nums = list(range(1, 5))
+        darr = DictArrayTemplate(nums, nums).wrap(
+            [
+                [0.7, 0.1, 0.2, 0.3],
+                [0.1, 0.7, 0.1, 0.3],
+                [0.3, 0.2, 0.6, 0.3],
+                [0.4, 0.1, 0.1, 0.7],
+            ]
+        )
+        got = darr[[1, 2], [1, 2]]
+        assert_allclose(got.array, numpy.array([[0.7, 0.1], [0.2, 0.6]]))
+
+    def test_add(self):
+        """can add compatible dict arrays"""
+        data = numpy.array([[7, 1], [1, 7]])
+        darr1 = DictArrayTemplate(list("AB"), list("CD")).wrap(data)
+        darr2 = DictArrayTemplate(list("AB"), list("CD")).wrap(data)
+        darr3 = darr1 + darr2
+        assert_allclose(darr3.array, 2 * data)
+        self.assertEqual(darr3.template.names, darr1.template.names)
+        # must be correct type
+        with self.assertRaises(TypeError):
+            darr1 + data
+
+        # must be equal dimensions
+        with self.assertRaises(ValueError):
+            darr1 + DictArrayTemplate(list("CD"), list("AB")).wrap(data)
 
 
 if __name__ == "__main__":

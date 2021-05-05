@@ -13,10 +13,10 @@ from cogent3.util import parallel
 
 
 __author__ = "Peter Maxwell and  Gavin Huttley"
-__copyright__ = "Copyright 2007-2020, The Cogent Project"
+__copyright__ = "Copyright 2007-2021, The Cogent Project"
 __credits__ = ["Peter Maxwell", "Gavin Huttley"]
 __license__ = "BSD-3"
-__version__ = "2020.2.7a"
+__version__ = "2021.04.20a"
 __maintainer__ = "Gavin Huttley"
 __email__ = "gavin.huttley@anu.edu.au"
 __status__ = "Production"
@@ -71,7 +71,8 @@ def makePC(modelClass, parameterisation, length, taxa, tree, opt_mprobs, **kw):
 
 
 def quiet(f, *args, **kw):
-    import sys, io
+    import io
+    import sys
 
     temp = io.StringIO()
     _stdout = sys.stdout
@@ -103,9 +104,9 @@ class CompareImplementations(object):
         (pc, aln) = quiet(makePC, *args)
         speed2 = measure_evals_per_sec(pc, aln)
         if speed1 < speed2:
-            speed = "+%2.1f" % (speed2 / speed1)
+            speed = f"+{speed2 / speed1:2.1f}"
         else:
-            speed = "-%2.1f" % (speed1 / speed2)
+            speed = f"-{speed1 / speed2:2.1f}"
         if speed in ["+1.0", "-1.0"]:
             speed = ""
         return speed

@@ -12,10 +12,10 @@ from .util import (
 
 
 __author__ = "Peter Maxwell"
-__copyright__ = "Copyright 2007-2020, The Cogent Project"
+__copyright__ = "Copyright 2007-2021, The Cogent Project"
 __credits__ = ["Peter Maxwell", "Gavin Huttley"]
 __license__ = "BSD-3"
-__version__ = "2020.2.7a"
+__version__ = "2021.04.20a"
 __maintainer__ = "Peter Maxwell"
 __email__ = "pm67nz@gmail.com"
 __status__ = "Production"
@@ -46,10 +46,10 @@ class WLS(TreeEvaluator):
 
     def __init__(self, dists, weights=None):
         """Arguments:
-            - dists: a dict with structure (seq1, seq2): distance
-            - weights: an equivalently structured dict with measurements of
-              variability of the distance estimates. By default, the sqrt of
-              distance is used."""
+        - dists: a dict with structure (seq1, seq2): distance
+        - weights: an equivalently structured dict with measurements of
+          variability of the distance estimates. By default, the sqrt of
+          distance is used."""
         try:
             dists = dists.to_dict()
         except AttributeError:

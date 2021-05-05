@@ -7,31 +7,49 @@ from functools import total_ordering
 import numpy
 
 from cogent3.maths.stats import chisqprob
-from cogent3.util.misc import get_object_provenance
+from cogent3.util.misc import extend_docstring_from, get_object_provenance
+from cogent3.util.table import Table
 
 
 __author__ = "Gavin Huttley"
-__copyright__ = "Copyright 2007-2020, The Cogent Project"
+__copyright__ = "Copyright 2007-2021, The Cogent Project"
 __credits__ = ["Gavin Huttley"]
 __license__ = "BSD-3"
-__version__ = "2020.2.7a"
+__version__ = "2021.04.20a"
 __maintainer__ = "Gavin Huttley"
 __email__ = "Gavin.Huttley@anu.edu.au"
 __status__ = "Alpha"
 
 
 class generic_result(MutableMapping):
-    """a dict style container for storing results. All keys are
-    converted to strings to ensure the object can be json serialised"""
+    """A dict style container for storing results."""
 
     _type = "generic_result"
+    _item_types = ()
 
     def __init__(self, source):
-        self._store = dict()
+        self._store = {}
         self._construction_kwargs = dict(source=source)
         self.source = source
 
     def __setitem__(self, key, val):
+        if isinstance(val, dict):
+            type_name = val.get("type", None)
+            type_name = type_name or ""
+        else:
+            type_name = val.__class__.__name__
+
+        for item_type in self._item_types:
+            if item_type in type_name:
+                break
+        else:
+            if self._item_types:
+                msg = f"{type_name} not in supported types {self._item_types}"
+                raise TypeError(msg)
+
+        if not hasattr(val, "to_json"):
+            json.dumps(val)
+
         self._store[key] = val
 
     def __getitem__(self, key):
@@ -51,8 +69,7 @@ class generic_result(MutableMapping):
         num = len(self)
         types = [f"{repr(k)}: {self[k].__class__.__name__}" for k in self.keys()[:4]]
         types = ", ".join(types)
-        result = f"{len(self)}x {name}({types})"
-        return result
+        return f"{num}x {name}({types})"
 
     def __str__(self):
         return repr(self)
@@ -91,12 +108,17 @@ class generic_result(MutableMapping):
                 if "cogent3" in type_:
                     object = deserialise_object(value)
                     self[key] = object
+            elif hasattr(value, "deserialised_values"):
+                value.deserialised_values()
 
 
 @total_ordering
 class model_result(generic_result):
+    """Storage of model results."""
+
     _type = "model_result"
     _stat_attrs = ("lnL", "nfp", "DLC", "unique_Q")
+    _item_types = ("AlignmentLikelihoodFunction",)
 
     def __init__(
         self,
@@ -122,37 +144,40 @@ class model_result(generic_result):
             elapsed_time=elapsed_time,
             num_evaluations=num_evaluations,
         )
-        self._store = dict()
+        self._store = {}
         self._name = name
         assert stat is sum or stat is max
         self._stat = stat
         self._elapsed_time = elapsed_time
         self._num_evaluations = num_evaluations
         self._evaluation_limit = evaluation_limit
-        self._lnL = None
-        self._nfp = None
-        self._DLC = None
-        self._unique_Q = None
+        self._lnL = lnL
+        self._nfp = nfp
+        self._DLC = DLC
+        self._unique_Q = unique_Q
 
     def _get_repr_data_(self):
-        from cogent3.util.table import Table
+        if len(self) == 0:
+            return f"{self.__class__.__name__}(name={self.name}, source={self.source})"
 
-        self.lf  # making sure we're fully reloaded
-        attrs = ["lnL", "nfp", "DLC", "unique_Q"]
+        self.deserialised_values()  # making sure we're fully reloaded
+        attrs = list(self._stat_attrs)
         header = ["key"] + attrs[:]
-        rows = [[""] + [getattr(self, attr) for attr in attrs]]
+        rows = [[repr("")] + [getattr(self, attr) for attr in attrs]]
         if len(self) > 1:
             # we just add keys, lnL and nfp
             for key in self:
                 row = [repr(key), self[key].lnL, self[key].nfp, "", ""]
                 rows.append(row)
+        else:
+            rows[0][0] = repr(list(self)[0])
 
-        table = Table(header=header, rows=rows, title=self.name)
-        return table
+        return Table(header=header, data=rows, title=self.name)
 
     def _repr_html_(self):
         table = self._get_repr_data_()
-        return table._repr_html_(include_shape=False)
+        table.set_repr_policy(show_shape=False)
+        return table._repr_html_()
 
     def __repr__(self):
         table = self._get_repr_data_()
@@ -160,32 +185,12 @@ class model_result(generic_result):
 
     def __setitem__(self, key, lf):
         super(self.__class__, self).__setitem__(key, lf)
-        if type(lf) != dict:
-            lf.set_name(key)
-            lnL = lf.lnL
-            nfp = lf.nfp
-            DLC = lf.all_psubs_DLC()
-            try:
-                unique_Q = lf.all_rate_matrices_unique()
-            except (NotImplementedError, KeyError):
-                # KeyError happens on discrete time model
-                unique_Q = None  # non-primary root issue
-        else:
-            lnL = lf.get("lnL")
-            nfp = lf.get("nfp")
-            DLC = lf.get("DLC")
-            unique_Q = lf.get("unique_Q")
+        self._init_stats()
 
-        if self._lnL is not None:
-            self._DLC = all([DLC, self.DLC])
-            self._unique_Q = all([unique_Q, self.unique_Q])
-            self._lnL = self._stat([lnL, self.lnL])
-            self._nfp = self._stat([nfp, self.nfp])
-        else:
-            self._lnL = lnL
-            self._nfp = nfp
-            self._DLC = DLC
-            self._unique_Q = unique_Q
+    def _init_stats(self):
+        """reset the values for stat attr to None, triggers recalc in properties"""
+        for attr in self._stat_attrs:
+            setattr(self, f"_{attr}", None)
 
     @property
     def num_evaluations(self):
@@ -211,6 +216,7 @@ class model_result(generic_result):
         return self._name
 
     def simulate_alignment(self):
+        self.deserialised_values()
         if len(self) == 1:
             aln = self.lf.simulate_alignment()
             return aln
@@ -229,9 +235,7 @@ class model_result(generic_result):
             seq = "".join(("".join(t) for t in zip(seq1, seq2, seq3)))
             data[n] = seq
 
-        simaln = aln.__class__(data=data)
-
-        return simaln
+        return aln.__class__(data=data)
 
     def __lt__(self, other):
         self_lnL = self.lnL
@@ -240,20 +244,11 @@ class model_result(generic_result):
 
     @property
     def lf(self):
-        result = list(self.values())
-        if type(result[0]) == dict:
-            from cogent3.util import deserialise
-
-            # we reset the stat attributes to None
-            for attr in self._stat_attrs:
-                setattr(self, attr, None)
-
-            for k, v in self.items():
-                v = deserialise.deserialise_likelihood_function(v)
-                self[k] = v
-
+        self.deserialised_values()
+        self._init_stats()
         if len(self) == 1:
             result = list(self.values())[0]
+            result.name = self.name
         else:
             result = OrderedDict()
             for k in sorted(self):
@@ -261,40 +256,63 @@ class model_result(generic_result):
                 if type(k) == str and k.isdigit():
                     k = int(k)
                 result[k] = v
+                v.name = f"{self.name} pos-{k}"
 
         return result
 
     @property
     def lnL(self):
-        return self._lnL
+        if self._lnL is None:
+            lnL = 0.0
+            for v in self.values():
+                l = v.get("lnL") if isinstance(v, dict) else v.lnL
+                lnL = self._stat([l, lnL])
 
-    @lnL.setter
-    def lnL(self, value):
-        self._lnL = value
+            self._lnL = lnL
+        return self._lnL
 
     @property
     def nfp(self):
-        return self._nfp
+        if self._nfp is None:
+            nfp = 0
+            for v in self.values():
+                n = v.get("nfp") if isinstance(v, dict) else v.nfp
+                nfp = self._stat([n, nfp])
 
-    @nfp.setter
-    def nfp(self, value):
-        self._nfp = value
+            self._nfp = nfp
+
+        return self._nfp
 
     @property
     def DLC(self):
-        return self._DLC
+        if self._DLC is None:
+            DLC = []
+            for v in self.values():
+                d = v.get("DLC") if isinstance(v, dict) else v.all_psubs_DLC()
+                DLC.append(d != False)
 
-    @DLC.setter
-    def DLC(self, value):
-        self._DLC = value
+            self._DLC = all(DLC)
+
+        return self._DLC
 
     @property
     def unique_Q(self):
-        return self._unique_Q
+        if self._unique_Q is None:
+            unique = []
+            for v in self.values():
+                if isinstance(v, dict):
+                    u = v.get("unique_Q")
+                else:
+                    try:
+                        u = v.all_rate_matrices_unique()
+                    except (NotImplementedError, KeyError):
+                        # KeyError happens on discrete time model
+                        u = None  # non-primary root issue
+                unique.append(u != False)
 
-    @unique_Q.setter
-    def unique_Q(self, value):
-        self._unique_Q = value
+            self._unique_Q = all(unique)
+
+        return self._unique_Q
 
     def total_length(self, length_as=None):
         """sum of all branch lengths on tree. If split codons, sums across trees
@@ -324,7 +342,9 @@ class model_result(generic_result):
         Note
         ----
         In the case of a discrete time process, length is 'paralinear'"""
-        from cogent3.evolve.ns_substitution_model import DiscreteSubstitutionModel
+        from cogent3.evolve.ns_substitution_model import (
+            DiscreteSubstitutionModel,
+        )
 
         try:
             model = self.lf.model
@@ -365,88 +385,50 @@ class model_result(generic_result):
         return result
 
 
-class hypothesis_result(generic_result):
-    _type = "hypothesis_result"
+class model_collection_result(generic_result):
+    """Storage of a collection of model_result."""
 
-    def __init__(self, name_of_null, source=None):
-        """
-        alt
-            either a likelihood function instance
-        """
-        super(hypothesis_result, self).__init__(source)
-        self._construction_kwargs = dict(name_of_null=name_of_null, source=source)
+    _type = "model_collection_result"
+    _item_types = ("model_result",)
 
-        self._name_of_null = name_of_null
+    def __init__(self, name=None, source=None):
+        """
+        name : str
+            name of this hypothesis
+        source : str
+            string describing source of the data, e.g. a path
+        """
+        super(model_collection_result, self).__init__(source)
+        self._construction_kwargs.update({"name": name})
+        self._name = name
 
     def _get_repr_data_(self):
-        from cogent3.util.table import Table
-
         rows = []
         attrs = ["lnL", "nfp", "DLC", "unique_Q"]
         for key, member in self.items():
-            member.lf  # making sure we're fully reloaded
-            if key == self._name_of_null:
-                status_name = ["null", repr(key)]
-            else:
-                status_name = ["alt", (repr(key))]
-            row = status_name + [getattr(member, a) for a in attrs]
+            member.deserialised_values()  # making sure we're fully reloaded
+            row = [repr(key)] + [getattr(member, a) for a in attrs]
             rows.append(row)
 
-        table = Table(header=["hypothesis", "key"] + attrs, rows=rows)
+        table = Table(header=["key"] + attrs, data=rows, title=self.name)
         table = table.sorted(columns="nfp")
-        stats = [[self.LR, self.df, self.pvalue]]
-        stats = Table(header=["LR", "df", "pvalue"], rows=stats, title="Statistics")
-        return stats, table
+        return table
 
     def _repr_html_(self):
-        stats, table = self._get_repr_data_()
-        result = [t._repr_html_(include_shape=False) for t in (stats, table)]
-        return "\n".join(result)
+        table = self._get_repr_data_()
+        table.set_repr_policy(show_shape=False)
+        return table._repr_html_()
 
     def __repr__(self):
-        stats, table = self._get_repr_data_()
-        result = []
-        for t in (stats, table):
-            r, _ = t._get_repr_()
-            result.append(str(r))
+        if len(self) == 0:
+            return f"{self.__class__.__name__}(name={self.name}, source={self.source})"
 
-        return "\n".join(result)
+        table = self._get_repr_data_()
+        return str(table._get_repr_())
 
     @property
-    def null(self):
-        return self[self._name_of_null]
-
-    @property
-    def alt(self):
-        alts = [self[k] for k in self if k != self._name_of_null]
-        alt = max(alts)
-        return alt
-
-    @property
-    def LR(self):
-        """returns 2 * (alt.lnL - null.lnL)"""
-        LR = self.alt.lnL - self.null.lnL
-        LR *= 2
-        return LR
-
-    @property
-    def df(self):
-        """returns the degrees-of-freedom (alt.nfp - null.nfp)"""
-        df = self.alt.nfp - self.null.nfp
-        return df
-
-    @property
-    def pvalue(self):
-        """returns p-value from chisqprob(LR, df)
-
-        None if LR < 0"""
-        if self.LR == 0:
-            pvalue = 1
-        elif self.LR > 0:
-            pvalue = chisqprob(self.LR, self.df)
-        else:
-            pvalue = None
-        return pvalue
+    def name(self):
+        return self._name
 
     def select_models(self, stat="aicc", threshold=0.05):
         """returns models satisfying stat threshold.
@@ -464,6 +446,7 @@ class hypothesis_result(generic_result):
         -------
         list of models satisfying threshold condition
         """
+        self.deserialised_values()
         assert stat in ("aicc", "aic")
         second_order = stat == "aicc"
         results = []
@@ -508,9 +491,127 @@ class hypothesis_result(generic_result):
 
         return selected[0]
 
+    def get_hypothesis_result(self, name_null, name_alt):
+        """returns a hypothesis result with two models
+
+        Parameters
+        ----------
+        name_null : str
+            name of the null model
+        name_alt : str
+            name of the alternate model
+        """
+        result = hypothesis_result(name_of_null=name_null, source=self.source)
+        result[name_null] = self[name_null]
+        result[name_alt] = self[name_alt]
+        return result
+
+
+class hypothesis_result(model_collection_result):
+    """Storage of a collection of model_result instances that are hierarchically
+    related."""
+
+    _type = "hypothesis_result"
+    _item_types = ("model_result",)
+
+    @extend_docstring_from(model_collection_result.__init__, pre=True)
+    def __init__(self, name_of_null, name=None, source=None):
+        """
+        name_of_null
+            key for the null hypothesis
+        """
+        super(hypothesis_result, self).__init__(name=name, source=source)
+        self._construction_kwargs = dict(name_of_null=name_of_null, source=source)
+
+        self._name_of_null = name_of_null
+
+    def _get_repr_data_(self):
+        rows = []
+        attrs = ["lnL", "nfp", "DLC", "unique_Q"]
+        for key, member in self.items():
+            member.deserialised_values()  # making sure we're fully reloaded
+            if key == self._name_of_null:
+                status_name = ["null", repr(key)]
+            else:
+                status_name = ["alt", repr(key)]
+            row = status_name + [getattr(member, a) for a in attrs]
+            rows.append(row)
+
+        table = Table(header=["hypothesis", "key"] + attrs, data=rows, title=self.name)
+        table = table.sorted(columns="nfp")
+        table.set_repr_policy(show_shape=False)
+        stats = [[self.LR, self.df, self.pvalue]]
+        col_templates = (
+            None
+            if self.pvalue is None
+            else {
+                "pvalue": "%.4f" if self.pvalue > 1e-3 else "%.2e",
+            }
+        )
+        stats = Table(
+            header=["LR", "df", "pvalue"],
+            data=stats,
+            title="Statistics",
+            column_templates=col_templates,
+        )
+        stats.set_repr_policy(show_shape=False)
+        return stats, table
+
+    def _repr_html_(self):
+        stats, table = self._get_repr_data_()
+        result = [t._repr_html_() for t in (stats, table)]
+        return "\n".join(result)
+
+    def __repr__(self):
+        if len(self) == 0:
+            return f"{self.__class__.__name__}(name={self.name}, source={self.source})"
+
+        stats, table = self._get_repr_data_()
+        result = []
+        for t in (stats, table):
+            r, _, _ = t._get_repr_()
+            result.append(str(r))
+
+        return "\n".join(result)
+
+    @property
+    def null(self):
+        return self[self._name_of_null]
+
+    @property
+    def alt(self):
+        alts = [self[k] for k in self if k != self._name_of_null]
+        return max(alts)
+
+    @property
+    def LR(self):
+        """returns 2 * (alt.lnL - null.lnL)"""
+        LR = self.alt.lnL - self.null.lnL
+        LR *= 2
+        return LR
+
+    @property
+    def df(self):
+        """returns the degrees-of-freedom (alt.nfp - null.nfp)"""
+        return self.alt.nfp - self.null.nfp
+
+    @property
+    def pvalue(self):
+        """returns p-value from chisqprob(LR, df)
+
+        None if LR < 0"""
+        if self.LR == 0:
+            pvalue = 1
+        elif self.LR > 0:
+            pvalue = chisqprob(self.LR, self.df)
+        else:
+            pvalue = None
+        return pvalue
+
 
 class bootstrap_result(generic_result):
     _type = "bootstrap_result"
+    _item_types = ("hypothesis_result", "model_collection_result")
 
     def __init__(self, source=None):
         super(bootstrap_result, self).__init__(source)
@@ -533,15 +634,22 @@ class bootstrap_result(generic_result):
     @property
     def null_dist(self):
         """returns the LR values corresponding to the synthetic data"""
-        result = [self[k].LR for k in self if k != "observed"]
-        return result
+        return [self[k].LR for k in self if k != "observed"]
 
 
 class tabular_result(generic_result):
-    """stores one or multiple tabular data sets, keyed by a title"""
+    """stores one or multiple cogent3 Tables, DictArray"""
 
     _type = "tabular_result"
     _stat_attrs = ("header", "rows")
+    _item_types = (
+        "Table",
+        "DictArray",
+        "MotifCounts",
+        "MotifFreqs",
+        "PSSM",
+        "DistanceMatrix",
+    )
 
     def __init__(self, source=None):
         super(tabular_result, self).__init__(source)

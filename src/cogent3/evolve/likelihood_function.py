@@ -24,7 +24,7 @@ from cogent3.util.misc import adjusted_gt_minprob, get_object_provenance
 
 
 __author__ = "Peter Maxwell"
-__copyright__ = "Copyright 2007-2020, The Cogent Project"
+__copyright__ = "Copyright 2007-2021, The Cogent Project"
 __credits__ = [
     "Gavin Huttley",
     "Andrew Butterfield",
@@ -36,7 +36,7 @@ __credits__ = [
     "Ananias Iliadis",
 ]
 __license__ = "BSD-3"
-__version__ = "2020.2.7a"
+__version__ = "2021.04.20a"
 __maintainer__ = "Gavin Huttley"
 __email__ = "gavin.huttley@anu.edu.au"
 __status__ = "Production"
@@ -292,7 +292,18 @@ class LikelihoodFunction(ParameterController):
         return result
 
     def get_psub_for_edge(self, name, **kw):
-        """returns the substitution probability matrix for the named edge"""
+        """returns the substitution probability matrix for the named edge
+
+        Parameters
+        ----------
+        name : str
+            name of the edge
+
+        Returns
+        -------
+        DictArray
+        """
+        # todo handle case of multiple loci
         try:
             # For PartialyDiscretePsubsDefn
             array = self.get_param_value("dpsubs", edge=name, **kw)
@@ -306,12 +317,19 @@ class LikelihoodFunction(ParameterController):
         Parameters
         ----------
         calibrated : bool
-            scales the rate matrix by branch length for each edge. If a rate
-            heterogeneity model, then the matrix is further scaled by rate
-            for a bin
+            If True, the rate matrix is scaled such that
+            ``sum(pi_i * Qii) == 1``. If False, the calibrated matrix is
+            multiplied by the length parameter (and the rate parameter for a
+            bin if it is a rate heterogeneity model).
+
         Returns
         -------
-        If a single rate matrix, the key is an empty tuple
+        {scope: DictArray, ...}
+
+        Notes
+        -----
+        If a single rate matrix (e.g. it's a time-homogeneous model), the key
+        is an empty tuple.
         """
         defn = self.defn_for["Q"]
 
@@ -359,8 +377,22 @@ class LikelihoodFunction(ParameterController):
     def get_rate_matrix_for_edge(self, name, calibrated=True, **kw):
         """returns the rate matrix (Q) for the named edge
 
-        If calibrated=False, expm(Q) will give the same result as
-        get_psub_for_edge(name)"""
+        Parameters
+        ----------
+        name : str
+            name of the edge
+        calibrated : bool
+            If True, the rate matrix is scaled such that
+            ``sum(pi_i * Qii) == 1``. If False, the calibrated matrix is
+            multiplied by the length parameter (and the rate parameter for a
+            bin if it is a rate heterogeneity model).
+
+        Notes
+        -----
+        If ``calibrated=False``, ``expm(Q)`` will give the same result as
+        ``self.get_psub_for_edge(name)``
+        """
+        # todo handle case of multiple loci
         try:
             array = self.get_param_value("Q", edge=name, **kw)
             array = array.copy()
@@ -399,14 +431,21 @@ class LikelihoodFunction(ParameterController):
         return root_lht.calc_G_statistic(root_lh, return_table)
 
     def reconstruct_ancestral_seqs(self, locus=None):
-        """returns a dict of DictArray objects containing probabilities
-        of each alphabet state for each node in the tree.
+        """computes the conditional probabilities of each state for each node
+        in the tree.
 
         Parameters
         ----------
         locus
             a named locus
 
+        Returns
+        -------
+        {node_name: DictArray, ...}
+
+        Notes
+        -----
+        Alignment columns are rows in the DictArray.
         """
         result = {}
         array_template = None
@@ -443,7 +482,7 @@ class LikelihoodFunction(ParameterController):
             )
         return result
 
-    def likely_ancestral_seqs(self, locus=None):
+    def likely_ancestral_seqs(self, locus=None) -> ArrayAlignment:
         """Returns the most likely reconstructed ancestral sequences as an
         alignment.
 
@@ -451,7 +490,6 @@ class LikelihoodFunction(ParameterController):
         ----------
         locus
             a named locus
-
         """
         prob_array = self.reconstruct_ancestral_seqs(locus=locus)
         seqs = []
@@ -500,7 +538,7 @@ class LikelihoodFunction(ParameterController):
 
     def _for_display(self):
         """processes statistics tables for display"""
-        title = self._name if self._name else "Likelihood function statistics"
+        title = self.name if self.name else "Likelihood function statistics"
         result = []
         result += self.get_statistics(with_motif_probs=True, with_titles=True)
         for i, table in enumerate(result):
@@ -508,14 +546,7 @@ class LikelihoodFunction(ParameterController):
                 "motif" in table.title and table.shape[1] == 2 and table.shape[0] >= 60
             ):  # just sort codon motif probs, then truncate
                 table = table.sorted(columns="motif")
-                data = table.tolist()
-                data = data[:5] + [["...", "..."]] + data[-5:]
-                table = table.__class__(
-                    header=table.header,
-                    rows=data,
-                    digits=table._digits,
-                    title=table.title,
-                )
+                table.set_repr_policy(head=5, tail=5, show_shape=False)
                 result[i] = table
         return title, result
 
@@ -531,7 +562,8 @@ class LikelihoodFunction(ParameterController):
         title, results = self._for_display()
         for i, table in enumerate(results):
             table.title = table.title.capitalize()
-            results[i] = table._repr_html_(include_shape=False)
+            table.set_repr_policy(show_shape=False)
+            results[i] = table._repr_html_()
         results = ["<h4>%s</h4>" % title, lnL, nfp] + results
         return "\n".join(results)
 
@@ -570,7 +602,9 @@ class LikelihoodFunction(ParameterController):
         The other measures are always available in the params dict of each
         node.
         """
-        from cogent3.evolve.ns_substitution_model import DiscreteSubstitutionModel
+        from cogent3.evolve.ns_substitution_model import (
+            DiscreteSubstitutionModel,
+        )
 
         is_discrete = isinstance(self.model, DiscreteSubstitutionModel)
 
@@ -694,7 +728,9 @@ class LikelihoodFunction(ParameterController):
         motif_probs : dict or DictArray
             an item for each edge of the tree. Computed if not provided.
         """
-        from cogent3.evolve.ns_substitution_model import DiscreteSubstitutionModel
+        from cogent3.evolve.ns_substitution_model import (
+            DiscreteSubstitutionModel,
+        )
 
         is_discrete = isinstance(self.model, DiscreteSubstitutionModel)
 
@@ -772,11 +808,7 @@ class LikelihoodFunction(ParameterController):
         param_names = self.get_param_names()
 
         mprob_name = [n for n in param_names if "mprob" in n]
-        if mprob_name:
-            mprob_name = mprob_name[0]
-        else:
-            mprob_name = ""
-
+        mprob_name = mprob_name[0] if mprob_name else ""
         if not with_motif_probs:
             param_names.remove(mprob_name)
 
@@ -827,16 +859,14 @@ class LikelihoodFunction(ParameterController):
                     list_table.append(row)
             if table_dims:
                 title = ["", "%s params" % " ".join(table_dims)][with_titles]
-                row_ids = True
             else:
-                row_ids = False
                 title = ["", "global params"][with_titles]
-
+            row_ids = None
             stat_table = table.Table(
                 heading_names,
                 list_table,
                 max_width=80,
-                row_ids=row_ids,
+                index_name=row_ids,
                 title=title,
                 **self._format,
             )
@@ -893,8 +923,18 @@ class LikelihoodFunction(ParameterController):
                 edge_attr[edge]["length"] = None
 
         model = self._model.to_rich_dict(for_pickle=False)
-        alignment = self.get_param_value("alignment").to_rich_dict()
-        mprobs = self.get_motif_probs().to_dict()
+
+        aln_defn = self.defn_for["alignment"]
+        if len(aln_defn.index) == 1:
+            alignment = self.get_param_value("alignment").to_rich_dict()
+            mprobs = self.get_motif_probs().to_dict()
+        else:
+            alignment = {a["locus"]: a["value"] for a in aln_defn.get_param_rules()}
+            mprobs = self.get_motif_probs()
+            for k in alignment:
+                alignment[k] = alignment[k].to_rich_dict()
+                mprobs[k] = mprobs[k].to_dict()
+
         DLC = self.all_psubs_DLC()
         try:
             unique_Q = self.all_rate_matrices_unique()
@@ -925,12 +965,23 @@ class LikelihoodFunction(ParameterController):
         data = json.dumps(data)
         return data
 
-    # For tests.  Compat with old LF interface
-    def set_name(self, name):
+    @property
+    def name(self):
+        if self._name is None:
+            self._name = self.model.name or ""
+
+        return self._name
+
+    @name.setter
+    def name(self, name):
         self._name = name
 
+    # For tests.  Compat with old LF interface
+    def set_name(self, name):
+        self.name = name
+
     def get_name(self):
-        return self._name or "unnamed"
+        return self.name
 
     def set_tables_format(self, space=4, digits=4):
         """sets display properties for statistics tables. This affects results
@@ -1011,20 +1062,27 @@ class LikelihoodFunction(ParameterController):
             a random number generator.
         exclude_internal
             if True, only sequences for tips are returned.
+        locus
+            if fit to multiple alignments, select the values corresponding to
+            locus for generating data
+        seed
+            seed value for the random number generator
         root_sequence
-            a sequence from which all others evolve.
-
+            a sequence from which all others evolve
         """
-
+        orig_ambig = {}
         if sequence_length is None:
             lht = self.get_param_value("lht", locus=locus)
-            sequence_length = len(lht.index)
+            try:
+                sequence_length = len(lht.index)
+            except AttributeError:
+                raise ValueError(
+                    f"Must provide sequence_length since no alignment set on self"
+                )
+
             leaves = self.get_param_value("leaf_likelihoods", locus=locus)
-            orig_ambig = {}
             for (seq_name, leaf) in list(leaves.items()):
                 orig_ambig[seq_name] = leaf.get_ambiguous_positions()
-        else:
-            orig_ambig = {}
 
         if random_series is None:
             random_series = random.Random()
@@ -1083,7 +1141,7 @@ class LikelihoodFunction(ParameterController):
         return True
 
     def initialise_from_nested(self, nested_lf):
-        from cogent3.evolve.substitution_model import TimeReversible
+        from cogent3.evolve.substitution_model import Stationary
 
         assert (
             self.get_num_free_params() > nested_lf.get_num_free_params()
@@ -1091,11 +1149,11 @@ class LikelihoodFunction(ParameterController):
         compatible_likelihood_functions(self, nested_lf)
 
         same = (
-            isinstance(self.model, TimeReversible)
-            and isinstance(nested_lf.model, TimeReversible)
+            isinstance(self.model, Stationary)
+            and isinstance(nested_lf.model, Stationary)
         ) or (
-            not isinstance(self.model, TimeReversible)
-            and not isinstance(nested_lf.model, TimeReversible)
+            not isinstance(self.model, Stationary)
+            and not isinstance(nested_lf.model, Stationary)
         )
 
         mprobs = nested_lf.get_motif_probs()

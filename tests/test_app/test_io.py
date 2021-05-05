@@ -4,10 +4,10 @@ import pathlib
 import shutil
 import zipfile
 
-from os.path import basename, join
+from os.path import join
 from tempfile import TemporaryDirectory
 from unittest import TestCase, main
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 import numpy
 
@@ -27,10 +27,10 @@ from cogent3.util.table import Table
 
 
 __author__ = "Gavin Huttley"
-__copyright__ = "Copyright 2007-2020, The Cogent Project"
+__copyright__ = "Copyright 2007-2021, The Cogent Project"
 __credits__ = ["Gavin Huttley"]
 __license__ = "BSD-3"
-__version__ = "2020.2.7a"
+__version__ = "2021.04.20a"
 __maintainer__ = "Gavin Huttley"
 __email__ = "Gavin.Huttley@anu.edu.au"
 __status__ = "Alpha"
@@ -105,6 +105,14 @@ class TestIo(TestCase):
         fasta_paths = io_app.get_data_store(self.basedir, suffix=".fasta", limit=2)
         fasta_loader = io_app.load_aligned(format="fasta")
         validate(fasta_paths, fasta_loader)
+
+    def test_load_aligned_nexus(self):
+        """should handle nexus too"""
+        nexus_paths = io_app.get_data_store(self.basedir, suffix="nex")
+        loader = io_app.load_aligned(format="nexus")
+        results = [loader(m) for m in nexus_paths]
+        for result in results:
+            self.assertIsInstance(result, ArrayAlignment)
 
     def test_load_aligned_from_zip(self):
         """correctly loads aligned seqs from a zip archive"""
@@ -241,16 +249,16 @@ class TestIo(TestCase):
 
     def test_load_tabular(self):
         """correctly loads tabular data"""
-        rows = [["1", "2"], ["3", "4"], ["5", "6.5"]]
-        table = Table(["A", "B"], rows=rows)
+        rows = [[1, 2], [3, 4], [5, 6.5]]
+        table = Table(["A", "B"], data=rows)
         load_table = io_app.load_tabular(sep="\t", with_header=True)
         with TemporaryDirectory(dir=".") as dirname:
             outpath = join(dirname, "delme.tsv")
             table.write(outpath)
             new = load_table(outpath)
             self.assertEqual(new.title, "")
-            self.assertEqual(type(new[0, "B"]), float)
-            self.assertEqual(type(new[0, "A"]), int)
+            self.assertEqual(type(new[0, "B"]), type(table[0, "B"]))
+            self.assertEqual(type(new[0, "A"]), type(table[0, "A"]))
             outpath = join(dirname, "delme2.tsv")
             with open(outpath, "w") as out:
                 out.write("\t".join(table.header[:1]) + "\n")
@@ -265,8 +273,8 @@ class TestIo(TestCase):
             dstore = WritableZippedDataStore(outpath, suffix="tsv", create=True)
             dstore.write("sample1.tsv", table.to_string("tsv"))
             new = load_table(dstore[0])
-            self.assertEqual(type(new[0, "B"]), float)
-            self.assertEqual(type(new[0, "A"]), int)
+            self.assertEqual(type(new[0, "B"]), type(table[0, "B"]))
+            self.assertEqual(type(new[0, "A"]), type(table[0, "A"]))
 
     def test_write_tabular_motif_counts_array(self):
         """correctly writes tabular data for MotifCountsArray"""
@@ -365,7 +373,7 @@ class TestIo(TestCase):
     def test_write_tabular_table(self):
         """correctly writes tabular data"""
         rows = [[1, 2], [3, 4], [5, 6.5]]
-        table = Table(["A", "B"], rows=rows)
+        table = Table(["A", "B"], data=rows)
         loader = io_app.load_tabular(sep="\t")
         with TemporaryDirectory(dir=".") as dirname:
             writer = io_app.write_tabular(data_path=dirname, format="tsv")
@@ -435,7 +443,7 @@ class TestIo(TestCase):
     def test_load_tabular_table(self):
         """correctly loads tabular data"""
         rows = [[1, 2], [3, 4], [5, 6.5]]
-        table = Table(["A", "B"], rows=rows)
+        table = Table(["A", "B"], data=rows)
         loader = io_app.load_tabular(sep="\t", as_type="table")
         with TemporaryDirectory(dir=".") as dirname:
             writer = io_app.write_tabular(data_path=dirname, format="tsv")
@@ -448,30 +456,31 @@ class TestIo(TestCase):
         """correctly writes an object with info attribute from json"""
         # create a mock object that pretends like it's been derived from
         # something
-        from cogent3.util.union_dict import UnionDict
+        from cogent3.app.result import generic_result
 
         with TemporaryDirectory(dir=".") as dirname:
             outdir = join(dirname, "delme")
-            mock = Mock()
-            mock.to_rich_dict = DNA.to_rich_dict
-            mock.info = UnionDict(source=join("blah", "delme.json"))
+
+            obj = generic_result(source=join("blah", "delme.json"))
+            obj["dna"] = DNA
             writer = io_app.write_json(outdir, create=True)
-            _ = writer(mock)
+            _ = writer(obj)
             reader = io_app.load_json()
             got = reader(join(outdir, "delme.json"))
-            self.assertEqual(got, DNA)
+            got.deserialised_values()
+            self.assertEqual(got["dna"], DNA)
 
         # now with a zipped archive
         with TemporaryDirectory(dir=".") as dirname:
             outdir = join(dirname, "delme.zip")
-            mock = Mock()
-            mock.to_rich_dict = DNA.to_rich_dict
-            mock.info = UnionDict(source=join("blah", "delme.json"))
+            obj = generic_result(source=join("blah", "delme.json"))
+            obj["dna"] = DNA
             writer = io_app.write_json(outdir, create=True)
-            identifier = writer(mock)
+            identifier = writer(obj)
             reader = io_app.load_json()
             got = reader(writer.data_store[0])
-            self.assertEqual(got, DNA)
+            got.deserialised_values()
+            self.assertEqual(got["dna"], DNA)
             expect = join(outdir.replace(".zip", ""), "delme.json")
             if expect.startswith("." + os.sep):
                 expect = expect[2:]

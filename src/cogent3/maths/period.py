@@ -14,12 +14,14 @@ from numpy import (
     zeros,
 )
 
+from .period_numba import autocorr_inner, goertzel_inner, ipdft_inner
+
 
 __author__ = "Hua Ying, Julien Epps and Gavin Huttley"
-__copyright__ = "Copyright 2007-2020, The Cogent Project"
+__copyright__ = "Copyright 2007-2021, The Cogent Project"
 __credits__ = ["Julien Epps", "Hua Ying", "Gavin Huttley", "Peter Maxwell"]
 __license__ = "BSD-3"
-__version__ = "2020.2.7a"
+__version__ = "2021.04.20a"
 __maintainer__ = "Gavin Huttley"
 __email__ = "Gavin.Huttley@anu.edu.au"
 __status__ = "Production"
@@ -33,8 +35,7 @@ def _goertzel_inner(x, N, period):
         s = x[n] + coeff * s_prev - s_prev2
         s_prev2 = s_prev
         s_prev = s
-    pwr = sqrt(s_prev2 ** 2 + s_prev ** 2 - coeff * s_prev2 * s_prev)
-    return pwr
+    return sqrt(s_prev2 ** 2 + s_prev ** 2 - coeff * s_prev2 * s_prev)
 
 
 def _ipdft_inner(x, X, W, ulim, N):  # naive python
@@ -64,18 +65,6 @@ def _autocorr_inner(x, xc, N):  # naive python
         for n in range(N):
             if 0 <= n - m < N:
                 xc[m + N - 1] += x[n] * x[n - m]
-
-
-try:
-    # try using pyrexed versions
-    from ._period import ipdft_inner, autocorr_inner, goertzel_inner
-
-    # raise ImportError # for profiling
-except ImportError:
-    # fastest python versions
-    ipdft_inner = _ipdft_inner2
-    autocorr_inner = _autocorr_inner2
-    goertzel_inner = _goertzel_inner
 
 
 def goertzel(x, period):
@@ -194,7 +183,7 @@ class Goertzel(_PeriodEstimator):
 
     def evaluate(self, x):
         x = array(x, float64)
-        return _goertzel_inner(x, self.length, self.period)
+        return goertzel_inner(x, self.length, self.period)
 
     __call__ = evaluate
 
@@ -214,11 +203,11 @@ class Hybrid(_PeriodEstimator):
         return_all=False,
     ):
         """Arguments:
-            - length: the length of signals to be encountered
-            - period: specified period at which to return the signal
-            - llim, ulim: the smallest, largest periods to evaluate
-            - return_all: whether to return the hybrid, ipdft, autocorr
-              statistics as a numpy array, or just the hybrid statistic
+        - length: the length of signals to be encountered
+        - period: specified period at which to return the signal
+        - llim, ulim: the smallest, largest periods to evaluate
+        - return_all: whether to return the hybrid, ipdft, autocorr
+          statistics as a numpy array, or just the hybrid statistic
         """
         super(Hybrid, self).__init__(length, llim, ulim, period)
         self.ipdft = Ipdft(length, llim, ulim, period, abs_ft_sig)
@@ -227,8 +216,7 @@ class Hybrid(_PeriodEstimator):
 
     def getNumStats(self):
         """the number of stats computed by this calculator"""
-        num = [1, 3][self._return_all]
-        return num
+        return [1, 3][self._return_all]
 
     def evaluate(self, x):
         if self.period is None:

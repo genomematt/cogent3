@@ -5,14 +5,14 @@ from tempfile import TemporaryDirectory
 from unittest import TestCase, main
 
 from cogent3 import available_apps
-from cogent3.app import align, evo, io, sample, translate, tree
+from cogent3.app import align, dist, evo, io, sample, translate, tree
 
 
 __author__ = "Gavin Huttley"
-__copyright__ = "Copyright 2007-2020, The Cogent Project"
+__copyright__ = "Copyright 2007-2021, The Cogent Project"
 __credits__ = ["Gavin Huttley"]
 __license__ = "BSD-3"
-__version__ = "2020.2.7a"
+__version__ = "2021.04.20a"
 __maintainer__ = "Gavin Huttley"
 __email__ = "Gavin.Huttley@anu.edu.au"
 __status__ = "Alpha"
@@ -27,6 +27,7 @@ def _get_all_composables(tmp_dir_name):
     applications = [
         align.align_to_ref(),
         align.progressive_align(model="GY94"),
+        dist.fast_slow_dist(moltype="dna", fast_calc="hamming"),
         evo.ancestral_states(),
         evo.bootstrap(hyp=test_hyp, num_reps=test_num_reps),
         evo.hypothesis(test_model1, test_model2),
@@ -42,6 +43,7 @@ def _get_all_composables(tmp_dir_name):
         sample.omit_duplicated(),
         sample.take_codon_positions(1),
         sample.take_named_seqs(),
+        sample.take_n_seqs(2),
         sample.trim_stop_codons(gc=1),
         translate.select_translatable(),
         tree.quick_tree(),
@@ -51,7 +53,7 @@ def _get_all_composables(tmp_dir_name):
     return applications
 
 
-class TestAvalableApps(TestCase):
+class TestAvailableApps(TestCase):
     def test_available_apps(self):
         """available_apps returns a table"""
         from cogent3.util.table import Table

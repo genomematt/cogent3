@@ -5,10 +5,10 @@ from cogent3.util.union_dict import UnionDict
 
 
 __author__ = "Rahul Ghangas, Peter Maxwell and Gavin Huttley"
-__copyright__ = "Copyright 2007-2020, The Cogent Project"
+__copyright__ = "Copyright 2007-2021, The Cogent Project"
 __credits__ = ["Gavin Huttley", "Peter Maxwell", "Rahul Ghangas"]
 __license__ = "BSD-3"
-__version__ = "2020.2.7a"
+__version__ = "2021.04.20a"
 __maintainer__ = "Gavin Huttley"
 __email__ = "gavin.huttley@anu.edu.au"
 __status__ = "Alpha"
@@ -209,15 +209,18 @@ class Dotplot(Drawable):
         height = width * len2 / len1
 
         super(Dotplot, self).__init__(
-            visible_axes=True, showlegend=True, width=width, height=height
+            visible_axes=True,
+            showlegend=True,
+            width=width,
+            height=height,
+            xtitle=xtitle,
+            ytitle=ytitle,
         )
 
         self.seq1 = seq1
         self.seq2 = seq2
         self._aligned_coords = get_align_coords(map1, map2, aligned=is_aligned)
 
-        self.xtitle = xtitle
-        self.ytitle = ytitle
         self.title = title
         self._window = window
         self._min_gap = min_gap
@@ -263,7 +266,7 @@ class Dotplot(Drawable):
         )
 
         fwd, rev = self._fwd, self._rev
-        if not self.title:
+        if self.title is None:
             title = (
                 f"Window={self._window}, Matched ≥ {self._threshold}/"
                 f"{self._window} & Gap ≤ {self._min_gap}"

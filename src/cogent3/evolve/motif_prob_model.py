@@ -10,10 +10,10 @@ from . import substitution_calculation
 
 
 __author__ = "Peter Maxwell"
-__copyright__ = "Copyright 2007-2020, The Cogent Project"
+__copyright__ = "Copyright 2007-2021, The Cogent Project"
 __credits__ = ["Peter Maxwell"]
 __license__ = "BSD-3"
-__version__ = "2020.2.7a"
+__version__ = "2021.04.20a"
 __maintainer__ = "Gavin Huttley"
 __email__ = "gavin.huttley@anu.edu.au"
 __status__ = "Production"
@@ -114,9 +114,9 @@ class SimpleMotifProbModel(MotifProbModel):
 class ComplexMotifProbModel(MotifProbModel):
     def __init__(self, tuple_alphabet, mask):
         """Arguments:
-            - tuple_alphabet: series of multi-letter motifs
-            - monomers: the monomers from which the motifs are made
-            - mask: instantaneous change matrix"""
+        - tuple_alphabet: series of multi-letter motifs
+        - monomers: the monomers from which the motifs are made
+        - mask: instantaneous change matrix"""
         self.mask = mask
         self.tuple_alphabet = tuple_alphabet
         self.monomer_alphabet = monomers = tuple_alphabet.moltype.alphabet
@@ -185,8 +185,7 @@ class MonomerProbModel(ComplexMotifProbModel):
         return result
 
     def calc_word_weight_matrix(self, monomer_probs):
-        result = monomer_probs.take(self.mutant_motif) * self.mask
-        return result
+        return monomer_probs.take(self.mutant_motif) * self.mask
 
     def make_motif_word_prob_defns(self):
         monomer_probs = self.make_motif_probs_defn()
@@ -292,8 +291,7 @@ class ConditionalMotifProbModel(ComplexMotifProbModel):
     def calc_word_weight_matrix(self, motif_probs):
         context_probs = numpy.dot(motif_probs, self.w2c)
         context_probs[context_probs == 0.0] = numpy.inf
-        result = motif_probs / context_probs.take(self.context_indices)
-        return result
+        return motif_probs / context_probs.take(self.context_indices)
 
     def make_motif_word_prob_defns(self):
         mprobs = self.make_motif_probs_defn()

@@ -1,11 +1,13 @@
 import warnings
 
+from unittest import TestCase, main
+
 import numpy
 
 from numpy import array, dot, empty, ones
 from numpy.testing import assert_allclose
 
-from cogent3 import DNA, make_aligned_seqs, make_tree
+from cogent3 import DNA, get_model, make_aligned_seqs, make_tree
 from cogent3.evolve.ns_substitution_model import (
     DiscreteSubstitutionModel,
     General,
@@ -18,12 +20,7 @@ from cogent3.evolve.ns_substitution_model import (
     StrandSymmetric,
 )
 from cogent3.evolve.predicate import MotifChange
-from cogent3.evolve.substitution_model import (
-    Parametric,
-    TimeReversibleNucleotide,
-)
-from cogent3.maths.matrix_exponentiation import PadeExponentiator as expm
-from cogent3.util.unit_test import TestCase, main
+from cogent3.evolve.substitution_model import TimeReversibleNucleotide
 
 
 warnings.filterwarnings("ignore", "Motif probs overspecified")
@@ -31,10 +28,10 @@ warnings.filterwarnings("ignore", "Model not reversible")
 
 
 __author__ = "Peter Maxwell and  Gavin Huttley"
-__copyright__ = "Copyright 2007-2020, The Cogent Project"
+__copyright__ = "Copyright 2007-2021, The Cogent Project"
 __credits__ = ["Gavin Huttley", "Ananias Iliadis"]
 __license__ = "BSD-3"
-__version__ = "2020.2.7a"
+__version__ = "2021.04.20a"
 __maintainer__ = "Gavin Huttley"
 __email__ = "gavin.huttley@anu.edu.au"
 __status__ = "Production"
@@ -143,14 +140,14 @@ class MakeCachedObjects:
         self.results["discrete"] = dis_lf
 
     def __call__(self, obj_name, **kwargs):
-        funcs = dict(
-            general=self.fit_general,
-            gen_stat=self.fit_gen_stat,
-            discrete=self.fit_discrete,
-            constructed_gen=self.fit_constructed_gen,
-        )
-
         if obj_name not in self.results:
+            funcs = dict(
+                general=self.fit_general,
+                gen_stat=self.fit_gen_stat,
+                discrete=self.fit_discrete,
+                constructed_gen=self.fit_constructed_gen,
+            )
+
             funcs[obj_name](results=self.results, **kwargs)
         return self.results[obj_name]
 
@@ -182,12 +179,11 @@ class NonStatMarkov(TestCase):
         gen_lf = self.make_cached("general", max_evaluations=2)
         gen_lnL = gen_lf.get_log_likelihood()
         dis_lf = self._setup_discrete_from_general(gen_lf)
-        self.assertFloatEqual(gen_lnL, dis_lf.get_log_likelihood())
+        assert_allclose(gen_lnL, dis_lf.get_log_likelihood())
 
     def test_paralinear_consistent_discrete_continuous(self):
         """paralinear masure should be consistent between the two classes"""
         gen_lf = self.make_cached("general", max_evaluations=2)
-        gen_lnL = gen_lf.get_log_likelihood()
         dis_lf = self._setup_discrete_from_general(gen_lf)
         ct_para = gen_lf.get_paralinear_metric()
         dt_para = dis_lf.get_paralinear_metric()
@@ -202,7 +198,7 @@ class NonStatMarkov(TestCase):
         rules = sm_lf.get_param_rules()
         gen_lf.apply_param_rules(rules)
         gen_lnL = gen_lf.get_log_likelihood()
-        self.assertFloatEqualAbs(sm_lnL, gen_lnL, eps=0.1)
+        assert_allclose(sm_lnL, gen_lnL, rtol=0.1)
 
     def test_general_stationary(self):
         """General stationary should be close to General"""
@@ -210,7 +206,13 @@ class NonStatMarkov(TestCase):
         gen_lf = self.make_cached("general", max_evaluations=25)
         gen_stat_lnL = gen_stat_lf.get_log_likelihood()
         gen_lnL = gen_lf.get_log_likelihood()
-        self.assertLessThan(gen_stat_lnL, gen_lnL)
+        self.assertLess(gen_stat_lnL, gen_lnL)
+
+    def test_general_stationary_param_list(self):
+        """general stationary returns parameter list"""
+        gs = GeneralStationary(DNA.alphabet)
+        params = gs.get_param_list()
+        self.assertTrue(params != [])
 
     def test_general_stationary_is_stationary(self):
         """should be stationary"""
@@ -220,7 +222,7 @@ class NonStatMarkov(TestCase):
         for edge in self.tree:
             psub = gen_stat_lf.get_psub_for_edge(edge.name)
             pi = dot(mprobs, psub.array)
-            self.assertFloatEqual(mprobs, pi)
+            assert_allclose(mprobs, pi)
 
     def test_general_is_not_stationary(self):
         """should not be stationary"""
@@ -231,7 +233,7 @@ class NonStatMarkov(TestCase):
             psub = gen_lf.get_psub_for_edge(edge.name)
             pi = dot(mprobs, psub.array)
             try:
-                self.assertFloatEqual(mprobs, pi)
+                assert_allclose(mprobs, pi)
             except AssertionError:
                 pass
 

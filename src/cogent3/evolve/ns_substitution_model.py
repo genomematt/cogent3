@@ -4,6 +4,7 @@ from cogent3.core import moltype
 from cogent3.evolve.discrete_markov import PsubMatrixDefn
 from cogent3.evolve.predicate import MotifChange
 from cogent3.maths.optimisers import ParameterOutOfBoundsError
+from cogent3.util.misc import extend_docstring_from
 
 from .substitution_model import (
     Parametric,
@@ -16,10 +17,10 @@ from .substitution_model import (
 
 
 __author__ = "Peter Maxwell, Gavin Huttley and Andrew Butterfield"
-__copyright__ = "Copyright 2007-2020, The Cogent Project"
+__copyright__ = "Copyright 2007-2021, The Cogent Project"
 __contributors__ = ["Gavin Huttley", "Peter Maxwell", "Ben Kaeheler", "Ananias Iliadis"]
 __license__ = "BSD-3"
-__version__ = "2020.2.7a"
+__version__ = "2021.04.20a"
 __maintainer__ = "Gavin Huttley"
 __email__ = "gavin.huttley@anu.edu.au"
 __status__ = "Production"
@@ -74,30 +75,45 @@ class GeneralStationary(Stationary):
     every possible instantaneous substitution, except the last in each column.
     As general as can be while still having stationary motif probabilities"""
 
-    # @extend_docstring_from(_ContinuousSubstitutionModel)
     def __init__(self, alphabet, **kw):
         Stationary.__init__(self, alphabet, **kw)
 
         alphabet = self.get_alphabet()  # as may be altered by recode_gaps etc.
         mask = self._instantaneous_mask
         N = len(alphabet)
-        self.param_pick = numpy.zeros([N, N], int)
-        self.parameter_order = []
-        self.last_in_column = []
-        for (d, (row, col)) in enumerate(zip(mask, mask.T)):
+        param_pick = numpy.zeros([N, N], int)
+        predicates = []
+        last_in_column = []
+        for d, (row, col) in enumerate(zip(mask, mask.T)):
             row = list(numpy.flatnonzero(row[d:]) + d)
             col = list(numpy.flatnonzero(col[d:]) + d)
             if col:
-                self.last_in_column.append((col.pop(), d))
+                last_in_column.append((col.pop(), d))
             else:
                 assert not row
+
             inst = [(d, j) for j in row] + [(i, d) for i in col]
 
             for (i, j) in inst:
                 (x, y) = [alphabet[k] for k in [i, j]]
-                self.parameter_order.append("%s/%s" % (x, y))
-                self.param_pick[i, j] = len(self.parameter_order)
-        const_param = self.parameter_order.pop()
+                predicates.append(MotifChange(x, y, forward_only=True))
+                param_pick[i, j] = len(predicates)
+
+        self.param_pick = param_pick
+        self.last_in_column = last_in_column
+
+        predicate_masks, predicate_order = self._adapt_predicates(predicates)
+        self.predicate_masks = predicate_masks
+        self.parameter_order = []
+        self.predicate_indices = []
+
+        for pred in predicate_order:
+            mask = predicate_masks[pred]
+            indices = numpy.nonzero(mask)
+            assert numpy.alltrue(mask[indices] == 1)
+            self.parameter_order.append(pred)
+            self.predicate_indices.append(indices)
+
         self.symmetric = False
         self.check_params_exist()
 
@@ -139,27 +155,33 @@ class DiscreteSubstitutionModel(_SubstitutionModel):
 
 
 class NonReversibleNucleotide(Parametric):
-    """A nucleotide substitution model."""
+    """Base non-reversible nucleotide substitution model."""
 
+    @extend_docstring_from(Parametric.__init__)
     def __init__(self, *args, **kw):
         Parametric.__init__(self, moltype.DNA.alphabet, *args, **kw)
 
 
 class NonReversibleDinucleotide(Parametric):
-    """A dinucleotide substitution model."""
+    """Base non-reversible dinucleotide substitution model."""
 
+    @extend_docstring_from(Parametric.__init__)
     def __init__(self, *args, **kw):
         Parametric.__init__(self, moltype.DNA.alphabet, motif_length=2, *args, **kw)
 
 
 class NonReversibleTrinucleotide(Parametric):
-    """A trinucleotide substitution model."""
+    """Base non-reversible trinucleotide substitution model."""
 
+    @extend_docstring_from(Parametric.__init__)
     def __init__(self, *args, **kw):
         Parametric.__init__(self, moltype.DNA.alphabet, motif_length=3, *args, **kw)
 
 
 class NonReversibleCodon(_Codon, Parametric):
+    """Base non-reversible codon substitution model."""
+
+    @extend_docstring_from(Parametric.__init__)
     def __init__(self, alphabet=None, gc=None, **kw):
         if gc is not None:
             alphabet = moltype.CodonAlphabet(gc=gc)
@@ -177,7 +199,7 @@ class StrandSymmetric(NonReversibleNucleotide):
 
 
 class NonReversibleProtein(Parametric):
-    """base protein substitution model."""
+    """Base non-reversible protein substitution model."""
 
     def __init__(self, with_selenocysteine=False, *args, **kw):
         alph = moltype.PROTEIN.alphabet

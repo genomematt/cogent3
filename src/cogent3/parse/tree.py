@@ -22,12 +22,12 @@ from cogent3.parse.record import RecordError
 
 
 __author__ = "Rob Knight"
-__copyright__ = "Copyright 2007-2020, The Cogent Project"
+__copyright__ = "Copyright 2007-2021, The Cogent Project"
 __credits__ = ["Rob Knight", "Catherine Lozupone", "Daniel McDonald"]
 __license__ = "BSD-3"
-__version__ = "2020.2.7a"
-__maintainer__ = "Rob Knight"
-__email__ = "rob@spot.colorado.edu"
+__version__ = "2021.04.20a"
+__maintainer__ = "Gavin Huttley"
+__email__ = "Gavin.Huttley@anu.edu.au"
 __status__ = "Development"
 
 strip = str.strip

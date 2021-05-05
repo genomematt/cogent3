@@ -1,4 +1,5 @@
 import os
+import pathlib
 
 from tempfile import TemporaryDirectory
 from unittest import TestCase, main
@@ -6,7 +7,12 @@ from unittest.mock import Mock
 
 from cogent3.app import io as io_app
 from cogent3.app import sample as sample_app
-from cogent3.app.composable import ComposableSeq, NotCompleted, user_function
+from cogent3.app.composable import (
+    SERIALISABLE_TYPE,
+    ComposableSeq,
+    NotCompleted,
+    user_function,
+)
 from cogent3.app.sample import min_length, omit_degenerates
 from cogent3.app.translate import select_translatable
 from cogent3.app.tree import quick_tree
@@ -14,10 +20,10 @@ from cogent3.core.alignment import ArrayAlignment
 
 
 __author__ = "Gavin Huttley"
-__copyright__ = "Copyright 2007-2020, The Cogent Project"
+__copyright__ = "Copyright 2007-2021, The Cogent Project"
 __credits__ = ["Gavin Huttley"]
 __license__ = "BSD-3"
-__version__ = "2020.2.7a"
+__version__ = "2021.04.20a"
 __maintainer__ = "Gavin Huttley"
 __email__ = "Gavin.Huttley@anu.edu.au"
 __status__ = "Alpha"
@@ -26,11 +32,11 @@ __status__ = "Alpha"
 class TestCheckpoint(TestCase):
     def test_checkpointable(self):
         """chained funcs should be be able to apply a checkpoint"""
-        path = "data" + os.sep + "brca1.fasta"
         reader = io_app.load_aligned(moltype="dna")
         omit_degens = sample_app.omit_degenerates(moltype="dna")
         with TemporaryDirectory(dir=".") as dirname:
             writer = io_app.write_seqs(dirname)
+            path = "data" + os.sep + "brca1.fasta"
             aln = reader(path)
             outpath = writer(aln)
 
@@ -45,7 +51,7 @@ class TestCheckpoint(TestCase):
             self.assertTrue(len(got) > 1000)
 
 
-ComposableSeq._input_types = ComposableSeq._output_types = set([None])
+ComposableSeq._input_types = ComposableSeq._output_types = {None}
 
 
 class TestComposableBase(TestCase):
@@ -175,6 +181,25 @@ class TestComposableBase(TestCase):
             self.assertEqual(len(process.data_store.incomplete), 3)
             process.data_store.close()
 
+    def test_apply_to_not_partially_done(self):
+        """correctly applies process when result already partially done"""
+        dstore = io_app.get_data_store("data", suffix="fasta")
+        num_records = len(dstore)
+        with TemporaryDirectory(dir=".") as dirname:
+            dirname = pathlib.Path(dirname)
+            reader = io_app.load_aligned(format="fasta", moltype="dna")
+            outpath = dirname / "delme.tinydb"
+            writer = io_app.write_db(outpath)
+            _ = writer(reader(dstore[0]))
+            writer.data_store.close()
+
+            writer = io_app.write_db(outpath, if_exists="ignore")
+            process = reader + writer
+            _ = process.apply_to(dstore, show_progress=False)
+            writer.data_store.close()
+            dstore = io_app.get_data_store(outpath)
+            self.assertEqual(len(dstore), num_records)
+
 
 class TestNotCompletedResult(TestCase):
     def test_err_result(self):
@@ -213,8 +238,8 @@ class TestNotCompletedResult(TestCase):
         self.assertEqual(
             got,
             "select_translatable(type='sequences', "
-            "moltype='dna', gc='Standard Nuclear', "
-            "allow_rc=False, trim_terminal_stop=True)",
+            "moltype='dna', gc=1, "
+            "allow_rc=False,\ntrim_terminal_stop=True)",
         )
 
         func = select_translatable(allow_rc=True)
@@ -222,8 +247,8 @@ class TestNotCompletedResult(TestCase):
         self.assertEqual(
             got,
             "select_translatable(type='sequences', "
-            "moltype='dna', gc='Standard Nuclear', "
-            "allow_rc=True, trim_terminal_stop=True)",
+            "moltype='dna', gc=1, "
+            "allow_rc=True,\ntrim_terminal_stop=True)",
         )
 
         nodegen = omit_degenerates()
@@ -231,14 +256,14 @@ class TestNotCompletedResult(TestCase):
         self.assertEqual(
             got,
             "omit_degenerates(type='aligned', moltype=None, "
-            "gap_is_degen=True, motif_length=1)",
+            "gap_is_degen=True,\nmotif_length=1)",
         )
         ml = min_length(100)
         got = str(ml)
         self.assertEqual(
             got,
             "min_length(type='sequences', length=100, "
-            "motif_length=1, subtract_degen=True, "
+            "motif_length=1, subtract_degen=True,\n"
             "moltype=None)",
         )
 
@@ -250,7 +275,8 @@ class TestPicklable(TestCase):
     def test_composite_pickleable(self):
         """composable functions should be pickleable"""
         from pickle import dumps
-        from cogent3.app import io, sample, evo, tree, translate, align
+
+        from cogent3.app import align, evo, io, sample, translate, tree
 
         read = io.load_aligned(moltype="dna")
         dumps(read)
@@ -284,13 +310,17 @@ class TestPicklable(TestCase):
     def test_triggers_bugcatcher(self):
         """a composable that does not trap failures returns NotCompletedResult
         requesting bug report"""
-        from cogent3.app import io, sample, evo, tree, translate, align
+        from cogent3.app import align, evo, io, sample, translate, tree
 
         read = io.load_aligned(moltype="dna")
         read.func = lambda x: None
         got = read("somepath.fasta")
         self.assertIsInstance(got, NotCompleted)
         self.assertEqual(got.type, "BUG")
+
+
+def _demo(ctx, expect):
+    return ctx.frame_start == expect
 
 
 class TestUserFunction(TestCase):
@@ -300,18 +330,14 @@ class TestUserFunction(TestCase):
     def bar(self, val, *args, **kwargs):
         return val.distance_matrix(calc="hamming", show_progress=False)
 
-    def _demo(self, ctx, expect):
-        self.assertEqual(ctx.frame_start, expect)
-        return expect
-
     def test_user_function_custom_variables(self):
+        # not sure what this is meant to be testing
         demo = user_function(
-            self._demo, ("aligned", "serialisable"), ("aligned", "serialisable")
+            _demo, ("aligned", "serialisable"), ("aligned", "serialisable")
         )
-        foo = demo
         frame_start = 2
-        foo.frame_start = frame_start
-        foo(frame_start)
+        demo.frame_start = frame_start
+        self.assertTrue(demo(demo, 2))
 
     def test_user_function(self):
         """composable functions should be user definable"""
@@ -360,6 +386,54 @@ class TestUserFunction(TestCase):
         self.assertEqual(
             str(u_function_2), "user_function(name='bar', module='test_composable')"
         )
+        # added into a composable func
+        loader = io_app.load_aligned()
+        proc = loader + u_function_1
+        got = str(proc)
+        self.assertTrue(got.startswith("load_aligned"))
+
+    def test_user_function_with_args_kwargs(self):
+        """correctly handles definition with args, kwargs"""
+        from math import log
+
+        def product(val, multiplier, take_log=False):
+            result = val * multiplier
+            if take_log:
+                result = log(result)
+
+            return result
+
+        # without defining any args, kwargs
+        ufunc = user_function(
+            product,
+            SERIALISABLE_TYPE,
+            SERIALISABLE_TYPE,
+        )
+        self.assertEqual(ufunc(2, 2), 4)
+        self.assertEqual(ufunc(2, 2, take_log=True), log(4))
+
+        # defining default arg2
+        ufunc = user_function(
+            product,
+            SERIALISABLE_TYPE,
+            SERIALISABLE_TYPE,
+            2,
+        )
+        self.assertEqual(ufunc(2), 4)
+        self.assertEqual(ufunc(2, take_log=True), log(4))
+
+        # defining default kwarg only
+        ufunc = user_function(
+            product, SERIALISABLE_TYPE, SERIALISABLE_TYPE, take_log=True
+        )
+        self.assertEqual(ufunc(2, 2), log(4))
+        self.assertEqual(ufunc(2, 2, take_log=False), 4)
+
+        # defining default arg and kwarg
+        ufunc = user_function(
+            product, SERIALISABLE_TYPE, SERIALISABLE_TYPE, 2, take_log=True
+        )
+        self.assertEqual(ufunc(2), log(4))
 
 
 if __name__ == "__main__":

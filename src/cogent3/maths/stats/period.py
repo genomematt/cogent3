@@ -14,10 +14,10 @@ except ImportError:  # python version < 2.6
 
 
 __author__ = "Hua Ying, Julien Epps and Gavin Huttley"
-__copyright__ = "Copyright 2007-2020, The Cogent Project"
+__copyright__ = "Copyright 2007-2021, The Cogent Project"
 __credits__ = ["Julien Epps", "Hua Ying", "Gavin Huttley"]
 __license__ = "BSD-3"
-__version__ = "2020.2.7a"
+__version__ = "2021.04.20a"
 __maintainer__ = "Gavin Huttley"
 __email__ = "Gavin.Huttley@anu.edu.au"
 __status__ = "Production"
@@ -65,7 +65,7 @@ def g_statistic(X, p=None, idx=None):
     return g_obs, p_val
 
 
-def _seq_to_symbols(seq, motifs, motif_length, result=None):
+def seq_to_symbols(seq, motifs, motif_length, result=None):
     """return symbolic represetation of the sequence
 
     Parameters
@@ -91,12 +91,6 @@ def _seq_to_symbols(seq, motifs, motif_length, result=None):
             result[i] = 1
 
     return result
-
-
-try:
-    from cogent3.maths._period import seq_to_symbols
-except ImportError:
-    seq_to_symbols = _seq_to_symbols
 
 
 class SeqToSymbols(object):

@@ -10,10 +10,10 @@ from cogent3.util.union_dict import UnionDict
 
 
 __author__ = "Rahul Ghangas, Peter Maxwell and Gavin Huttley"
-__copyright__ = "Copyright 2007-2020, The Cogent Project"
+__copyright__ = "Copyright 2007-2021, The Cogent Project"
 __credits__ = ["Peter Maxwell", "Gavin Huttley", "Rahul Ghangas"]
 __license__ = "BSD-3"
-__version__ = "2020.2.7a"
+__version__ = "2021.04.20a"
 __maintainer__ = "Gavin Huttley"
 __email__ = "gavin.huttley@anu.edu.au"
 __status__ = "Alpha"
@@ -245,7 +245,7 @@ class TreeGeometryBase(PhyloNode):
             return None
 
         x = self.x
-        data = UnionDict(
+        return UnionDict(
             x=x,
             y=self.y,
             xshift=xshift,
@@ -255,7 +255,6 @@ class TreeGeometryBase(PhyloNode):
             text=f"{val:.2f}",
             xanchor="center",
         )
-        return data
 
 
 class SquareTreeGeometry(TreeGeometryBase):
@@ -269,11 +268,10 @@ class SquareTreeGeometry(TreeGeometryBase):
         if self._y is None:
             num_kids = len(self.children)
             even = num_kids % 2 == 0
+            i = floor(num_kids / 2)
             if even:
-                i = floor(num_kids / 2)
                 val = (self.children[i].y + self.children[i - 1].y) / 2
             else:
-                i = floor(num_kids / 2)
                 val = self.children[i].y
             self._y = val
         return self._y
@@ -304,11 +302,9 @@ class SquareTreeGeometry(TreeGeometryBase):
         value = self.params.get(attr, None)
         if value is None:
             value = getattr(self, attr, None)
-        data = UnionDict(
+        return UnionDict(
             x=x, y=y, textangle=self.theta, showarrow=False, text=value, xanchor="left"
         )
-
-        return data
 
 
 class _AngularGeometry:
@@ -425,7 +421,7 @@ class CircularTreeGeometry(TreeGeometryBase):
         radius = np.sqrt(self.x ** 2 + self.y ** 2) + padding
         x, y = polar_2_cartesian(self.theta, radius)
 
-        data = UnionDict(
+        return UnionDict(
             x=x,
             y=y,
             textangle=textangle,
@@ -434,7 +430,6 @@ class CircularTreeGeometry(TreeGeometryBase):
             xanchor="center",
             yanchor="middle",
         )
-        return data
 
     @extend_docstring_from(TreeGeometryBase.support_text_coord)
     def support_text_coord(self, xshift, yshift, threshold=1, max_attr_length=4):
@@ -466,7 +461,7 @@ class CircularTreeGeometry(TreeGeometryBase):
         new_yshift = float(d.T[1])
 
         x = self.x
-        data = UnionDict(
+        return UnionDict(
             x=x,
             y=self.y,
             xshift=new_xshift,
@@ -476,7 +471,6 @@ class CircularTreeGeometry(TreeGeometryBase):
             text=f"{val:.2f}",
             xanchor="center",
         )
-        return data
 
     def get_segment_to_child(self, child):
         """returns coordinates connecting a child to self and descendants"""
@@ -544,11 +538,7 @@ class Dendrogram(Drawable):
         if length_attr is None and not contemporaneous:
             contemporaneous = tree.children[0].length is None
 
-        if contemporaneous:
-            length_attr = "frac_pos"
-        else:
-            length_attr = length_attr or "length"
-
+        length_attr = "frac_pos" if contemporaneous else length_attr or "length"
         kwargs = UnionDict(length_attr=length_attr) if contemporaneous else {}
         self.tree = klass(tree, **kwargs)
         self.tree.propagate_properties()
@@ -576,16 +566,13 @@ class Dendrogram(Drawable):
 
     @property
     def label_pad(self):
-        if isinstance(self.tree, CircularTreeGeometry):
-            default = 0.15
-        else:
-            default = 0.025
-
-        if self._label_pad is None and not self.contemporaneous:
-            max_x = max(self.tree.max_x, abs(self.tree.min_x))
-            self._label_pad = max_x * default
-        elif self._label_pad is None:
-            self._label_pad = default
+        default = 0.15 if isinstance(self.tree, CircularTreeGeometry) else 0.025
+        if self._label_pad is None:
+            if not self.contemporaneous:
+                max_x = max(self.tree.max_x, abs(self.tree.min_x))
+                self._label_pad = max_x * default
+            else:
+                self._label_pad = default
         return self._label_pad
 
     @label_pad.setter
@@ -623,7 +610,7 @@ class Dendrogram(Drawable):
 
     @contemporaneous.setter
     def contemporaneous(self, value):
-        if not type(value) == bool:
+        if type(value) != bool:
             raise TypeError
         if self._contemporaneous != value:
             klass = self.tree.__class__
@@ -641,6 +628,11 @@ class Dendrogram(Drawable):
     @property
     def tip_font(self):
         return self._tip_font
+
+    @tip_font.setter
+    def tip_font(self, val):
+        """update tip font settings"""
+        self._tip_font = val
 
     def _scale_label_pad(self):
         """returns the label pad scaled by maximum dist to tip"""
@@ -660,22 +652,10 @@ class Dendrogram(Drawable):
         if not self.scale_bar or self.contemporaneous:
             return None, None
 
-        if "left" in self.scale_bar:
-            x = self.tree.min_x
-        else:
-            x = self.tree.max_x
-
-        if "bottom" in self.scale_bar:
-            y = self.tree.min_y
-        else:
-            y = self.tree.max_y
-
+        x = self.tree.min_x if "left" in self.scale_bar else self.tree.max_x
+        y = self.tree.min_y if "bottom" in self.scale_bar else self.tree.max_y
         scale = 0.1 * self.tree.max_x
-        if scale < 1e-4:
-            text = "{:.2e}".format(scale)
-        else:
-            text = "{:.2f}".format(scale)
-
+        text = "{:.1e}".format(scale) if scale < 1e-2 else "{:.2f}".format(scale)
         shape = {
             "type": "line",
             "x0": x,
@@ -698,7 +678,6 @@ class Dendrogram(Drawable):
         return shape, annotation
 
     def _build_fig(self, **kwargs):
-        self.layout = UnionDict(self._default_layout)
         grouped = {}
 
         tree = self.tree
@@ -840,6 +819,8 @@ class Dendrogram(Drawable):
         if type(edges) == str:
             edges = [edges]
         edges = frozenset(edges)
+        if not edges.issubset({edge.name for edge in self.tree.preorder()}):
+            raise ValueError("edge not present in tree")
         style = UnionDict(width=self._line_width, color=self._line_color)
         style.update(line)
         self._edge_sets[edges] = UnionDict(legendgroup=legendgroup, line=style)
@@ -897,10 +878,9 @@ class Dendrogram(Drawable):
         -------
         list of edge names
         """
-        names = self.tree.get_edge_names(
+        return self.tree.get_edge_names(
             tip1, tip2, stem=stem, clade=clade, outgroup_name=outgroup
         )
-        return names
 
     @property
     def scale_bar(self):
